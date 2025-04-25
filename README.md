@@ -1,9 +1,167 @@
-# Schreme
+# Schreme - A Scheme-inspired language & interpreter in Rust
 
-## Summary
+This project aims to build an interpreter, initially for a subset of Scheme, iteratively adding features and eventually evolving into a distinct language with type safety and a Cranelift-based backend.
 
-Schreme is a Scheme built in rust with the purpose of learning how to build a language along with all of the supporting tooling like formatter, language server, etc.
+The goal is to learn about building a language along with all of the supporting tooling like formatter, language server, etc.
 
-## TODO
+## TODO Roadmap
 
-- [x] Turn the lexer into a FSM
+This list outlines the planned development steps, subject to change as the project evolves.
+
+### Phase 1: Core Scheme Subset & Foundation
+
+* [x] **Project Setup:** Basic Rust binary project structure (`Cargo.toml`, `src/main.rs`).
+    * [x] Module structure (`lexer.rs`, `types.rs`, `parser.rs`, `evaluator.rs`, `environment.rs`).
+    * [x] Setup `lib.rs` for library structure.
+* [ ] **Core Data Types (`types.rs`):** Define `Sexpr` enum (Symbol, Number, Boolean, List, Nil).
+    * [x] Implement `Display` for pretty-printing `Sexpr`.
+    * [ ] Add `Pair`/`Cons` cell representation (alternative/complement to `Vec<Sexpr>` for lists).
+    * [ ] Add `String` type.
+    * [ ] Add `Vector` type (`#( ... )`).
+    * [ ] Add `Character` type (`#\a`).
+* [x] **Lexer (`lexer.rs`):** Convert input string to `Token` stream.
+    * [x] Handle basic tokens: `(`, `)`, `'`, symbols, numbers (float), booleans (`#t`, `#f`).
+    * [x] Handle string literals (`"`).
+    * [x] Handle whitespace and comments (`;`).
+    * [x] Implement robust error handling (`LexerError`).
+    * [x] Add comprehensive unit tests.
+    * [x] Setup benchmarking with Criterion (`cargo bench`).
+    * [x] Turn the lexer into a FSM
+* [ ] **Parser (`parser.rs`):** Convert `Token` stream to `Sexpr` (AST).
+    * [ ] Parse atoms (symbols, numbers, booleans, strings).
+    * [ ] Parse lists (`(...)`).
+    * [ ] Handle quote sugar (`'expr` -> `(quote expr)`).
+    * [ ] Handle quasiquote/unquote (`,`, `,@`) later.
+    * [ ] Implement robust error handling (`ParseError`).
+    * [ ] Add comprehensive unit tests.
+* [ ] **Basic Environment (`environment.rs`):** Store variable bindings.
+    * [ ] Implement nested environments (for lexical scoping).
+    * [ ] Define/get variables.
+    * [ ] Handle `set!` for mutation.
+* [ ] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
+    * [ ] Evaluate self-evaluating atoms (numbers, booleans, strings).
+    * [ ] Evaluate symbols (variable lookup in environment).
+    * [ ] Implement `quote` special form.
+    * [ ] Implement `if` special form.
+    * [ ] Implement `begin` special form.
+    * [ ] Implement `define` special form (global/local).
+    * [ ] Implement `set!` special form.
+    * [ ] Implement basic procedure calls (primitives first).
+    * [ ] Implement robust error handling (`EvalError`).
+* [ ] **Primitive Procedures:** Implement core built-in functions.
+    * [ ] Basic arithmetic (`+`, `-`, `*`, `/`).
+    * [ ] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
+    * [ ] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
+    * [ ] List operations (`cons`, `car`, `cdr`, `list`).
+    * [ ] Equality (`eq?`, `eqv?`, `equal?`).
+* [ ] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
+    * [ ] Read input line by line.
+    * [ ] Integrate Lexer, Parser, Evaluator.
+    * [ ] Print results or errors.
+    * [ ] Add history (using rustyline?).
+* [ ] **Error Handling:** Unified and user-friendly error reporting.
+    * [ ] Include source location/span information in errors.
+    * [ ] Consistent error types/display.
+
+### Phase 2: Tooling & Ecosystem (Start Early)
+
+* [ ] **Language Server Protocol (LSP) Implementation (`schreme-lsp/`?):** Provide IDE features.
+    * [ ] **Setup:** Create a separate LSP binary crate.
+    * [ ] **Communication:** Implement JSON-RPC communication layer (e.g., using `lsp-server`, `tower-lsp`).
+    * [ ] **Basic Diagnostics:** Report lexer/parser errors (`textDocument/publishDiagnostics`). Requires parsing on change.
+    * [ ] **Syntax Highlighting:** Implement basic semantic token highlighting (`textDocument/semanticTokens`).
+    * [ ] **Completions:** Offer basic completions for keywords and primitives (`textDocument/completion`).
+    * [ ] **Hover:** Show basic type info for primitives (`textDocument/hover`).
+    * [ ] **Advanced Features (Later):**
+        * [ ] Go To Definition (requires environment analysis).
+        * [ ] Find References.
+        * [ ] Renaming.
+        * [ ] Diagnostics based on basic analysis (e.g., unbound variables).
+* [ ] **Basic Formatter (`schreme-fmt/`?):** Auto-format code.
+    * [ ] Define formatting rules.
+    * [ ] Integrate with parser/AST.
+    * [ ] Command-line tool.
+* [ ] **Tree-sitter Parser (Exploration/Alternative):**
+    * [ ] Evaluate existing `tree-sitter-scheme`.
+    * [ ] Consider creating `tree-sitter-schreme` if syntax diverges significantly.
+    * [ ] Explore using Tree-sitter *within* the LSP for faster, more resilient parsing for IDE features.
+* [ ] **Testing Framework:**
+    * [ ] Develop infrastructure for running Scheme code tests against the interpreter.
+    * [ ] Integrate with `cargo test`.
+* [ ] **Package/Module System (`schreme-pkg/`?):** Manage dependencies and code organization.
+    * [ ] **Design:** Define module syntax (`define-library`, custom?).
+    * [ ] **Manifest:** Define a package manifest file format (`Schreme.toml`?).
+    * [ ] **Resolution:** Implement dependency resolution logic.
+    * [ ] **Fetching:** Mechanism to fetch dependencies (Git, registry?).
+    * [ ] **Build Integration:** Integrate package management into the execution flow.
+
+### Phase 3: Advanced Scheme Features
+
+* [ ] **Lambda & Closures:** Implement user-defined procedures.
+    * [ ] `lambda` special form.
+    * [ ] Proper lexical scoping (capture environment).
+    * [ ] Procedure call evaluation for user functions.
+* [ ] **Tail Call Optimization (TCO):** Essential for idiomatic Scheme recursion.
+    * [ ] Implement TCO within the tree-walking evaluator (Trampoline, or direct jump).
+* [ ] **Macros:** Implement hygienic macros (`syntax-rules`).
+    * [ ] `define-syntax`, `syntax-rules`.
+    * [ ] Expansion mechanism.
+    * [ ] Consider `syntax-case` later for more power.
+* [ ] **Continuations:** Implement `call/cc` (`call-with-current-continuation`). (Challenging but powerful).
+* [ ] **More Data Types & Primitives:**
+    * [ ] Vectors (`vector`, `vector-ref`, `vector-set!`, etc.).
+    * [ ] Characters (`char?`, `char=?`, etc.).
+    * [ ] Ports (Input/Output: `open-input-file`, `read`, `write`, `display`).
+    * [ ] Hash Tables.
+* [ ] **File Execution:** Allow running `.ss`/`.scm` files directly.
+* [ ] **Garbage Collection (GC):** Crucial for managing memory, especially with closures and continuations.
+    * [ ] Choose a GC strategy (Reference Counting, Mark-Sweep, Generational).
+    * [ ] Integrate GC with Rust data structures (using libraries like `gc-arena`, `bacon-rajan-cc`, or custom).
+
+### Phase 4: Cranelift Backend & Performance
+
+* [ ] **Intermediate Representation (IR):** Design an IR suitable for compilation.
+    * [ ] Possibly a typed IR distinct from `Sexpr`.
+    * [ ] SSA (Static Single Assignment) form?
+* [ ] **Lowering:** Translate `Sexpr` AST (or a high-level IR) to the chosen IR.
+* [ ] **Cranelift Integration:**
+    * [ ] Basic setup: Link Cranelift, create `Context`, `Module`.
+    * [ ] Function compilation: Translate IR functions to Cranelift IR (`cranelift-frontend`).
+    * [ ] JIT Execution: Compile and execute functions on the fly (`cranelift-jit`).
+    * [ ] AOT Compilation: Option to compile to object files (`cranelift-object`).
+* [ ] **Runtime System:** Support code generated by Cranelift.
+    * [ ] Memory management integration (calling GC).
+    * [ ] Primitive function implementation callable from compiled code.
+    * [ ] Calling conventions between interpreted and compiled code.
+    * [ ] Exception/Continuation handling integration.
+* [ ] **Optimization:** Apply optimization passes within Cranelift.
+
+### Phase 5: Schreme - Divergence & Custom Features
+
+* [ ] **Static Typing:** Design and implement a type system.
+    * [ ] Type syntax.
+    * [ ] Type checking algorithm.
+    * [ ] Type inference?
+    * [ ] Integrate type checking into the evaluator or compilation pipeline.
+    * [ ] Update LSP for type information and errors.
+* [ ] **Syntax Changes:** Evolve the language syntax away from pure S-expressions if desired.
+    * [ ] This might require significant parser changes (potentially favouring Tree-sitter).
+* [ ] **Feature Modification/Removal:** Change or remove Scheme features that don't fit the vision for Schreme.
+* [ ] **Foreign Function Interface (FFI):** Define how to call Rust/C code from Schreme and vice-versa.
+* [ ] **Concurrency/Parallelism:** Design and implement features for concurrent execution (actors, futures?).
+
+### Phase 6: Polish & Release
+
+* [ ] **Documentation:** Comprehensive user guides, language reference, API docs.
+* [ ] **Examples:** Provide clear examples of how to use Schreme.
+* [ ] **Refinement:** Code cleanup, address TODOs/FIXMEs.
+* [ ] **Further Benchmarking and Optimization.**
+* [ ] **Release Strategy:** Versioning, packaging.
+
+### Meta / Ongoing
+
+* [ ] Maintain comprehensive unit and integration tests.
+* [ ] Keep dependencies updated.
+* [ ] Refactor code for clarity and maintainability.
+* [ ] Write documentation alongside features.
+* [ ] Continuously benchmark performance bottlenecks.
