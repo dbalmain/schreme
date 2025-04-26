@@ -5,8 +5,6 @@ pub mod lexer;
 pub mod parser;
 pub mod types;
 
-// Optional: Re-export key types/functions for easier use by consumers
-// of the library (like main.rs or benchmarks)
-// pub use lexer::{tokenize, tokenize2, Token, LexerError};
-// pub use types::Sexpr;
-// ... etc.
+pub use lexer::{LexerError, Token, tokenize};
+pub use parser::{ParseError, Parser, parse_str};
+pub use types::Sexpr;

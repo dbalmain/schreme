@@ -28,12 +28,13 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Setup benchmarking with Criterion (`cargo bench`).
     * [x] Turn the lexer into a FSM
 * [ ] **Parser (`parser.rs`):** Convert `Token` stream to `Sexpr` (AST).
-    * [ ] Parse atoms (symbols, numbers, booleans, strings).
-    * [ ] Parse lists (`(...)`).
-    * [ ] Handle quote sugar (`'expr` -> `(quote expr)`).
+    * [x] Parse atoms (symbols, numbers, booleans, strings).
+    * [x] Parse lists (`(...)`).
+    * [x] Handle quote sugar (`'expr` -> `(quote expr)`).
     * [ ] Handle quasiquote/unquote (`,`, `,@`) later.
-    * [ ] Implement robust error handling (`ParseError`).
-    * [ ] Add comprehensive unit tests.
+    * [x] Implement robust error handling (`ParseError`).
+    * [x] Add comprehensive unit tests.
+    * [ ] Add helpful explanations of errors, like Elm.
 * [ ] **Basic Environment (`environment.rs`):** Store variable bindings.
     * [ ] Implement nested environments (for lexical scoping).
     * [ ] Define/get variables.

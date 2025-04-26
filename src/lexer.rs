@@ -1,8 +1,6 @@
-use logos::{Logos, Source};
+use logos::Logos;
 use std::fmt;
-use std::iter::Peekable;
 use std::num::ParseFloatError;
-use std::str::Chars;
 
 impl From<ParseFloatError> for LexerError {
     fn from(err: ParseFloatError) -> Self {

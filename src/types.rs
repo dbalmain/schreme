@@ -4,15 +4,17 @@ use std::fmt; // For custom display formatting
 /// This enum will be the core data structure for both code (AST) and data.
 #[derive(Debug, Clone, PartialEq)] // Add traits for easy debugging, copying, and comparison
 pub enum Sexpr {
-    Symbol(String),                // e.g., +, variable-name, quote
-    Number(f64),                   // Using f64 for simplicity for now
-    Boolean(bool),                 // #t or #f
-    List(Vec<Sexpr>),              // e.g., (+ 1 2), (define x 10)
-    Nil,                           // Represents the empty list '()
-    // --- Future additions ---
-    // String(String),             // For string literals "hello"
-    // Primitive(PrimitiveFunc),   // Built-in functions like +,-,* etc.
-    // Lambda(LambdaExpr),         // User-defined functions
+    Symbol(String),   // e.g., +, variable-name, quote
+    Number(f64),      // Using f64 for simplicity for now
+    Boolean(bool),    // #t or #f
+    String(String),   // For string literals "hello\n"
+    List(Vec<Sexpr>), // e.g., (+ 1 2), (define x 10)
+    Nil,              // Represents the empty list '()
+
+                      // --- Future additions ---
+                      // Pair(Box<Sexpr>, Box<Sexpr>), // For dotted pairs, alternative list rep
+                      // Primitive(PrimitiveFunc),
+                      // Lambda(LambdaExpr),
 }
 
 // Implement Display trait for pretty printing the Sexpr values
@@ -35,6 +37,16 @@ impl fmt::Display for Sexpr {
                 write!(f, ")")
             }
             Sexpr::Nil => write!(f, "()"),
+            Sexpr::String(str) => {
+                write!(
+                    f,
+                    "\"{}\"",
+                    str.replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
+                        .replace("\t", "\\t")
+                )
+            }
         }
     }
 }

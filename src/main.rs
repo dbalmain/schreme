@@ -1,25 +1,36 @@
-// Use the library crate (whose name is defined in Cargo.toml)
-use schreme::lexer::tokenize; // Use the specific items you need
-use schreme::types::Sexpr; // Example if you use Sexpr directly here
-// Or use rusty_scheme::lexer; etc.
+use schreme::parser::parse_str; // Use parse_str
 
 fn main() {
     println!("Welcome to Rusty Scheme!");
 
-    let input = "(define x 10)";
-    println!("Input:\n{}", input);
+    // --- TEMPORARY Parser Test ---
+    let inputs = vec![
+        "(define x (+ 10 5.5))",
+        "; comment\n   '(\"hello\" #t (nested list))",
+        "()",
+        "123",
+        "( unbalanced",   // Error case
+        "'",              // Error case
+        "\"unterminated", // Error case
+    ];
 
-    // Now call the functions via the library crate
-    match tokenize(input) {
-        Ok(tokens) => {
-            println!("Tokens:");
-            for token in tokens {
-                println!("  {:?}", token);
+    for input in inputs {
+        println!("--------------------");
+        println!("Input:\n{}", input);
+        match parse_str(input) {
+            // Use the helper function
+            Ok(sexpr) => {
+                println!("Parsed Sexpr: {:?}", sexpr);
+                // Also test Display impl
+                println!("Formatted: {}", sexpr);
+            }
+            Err(e) => {
+                eprintln!("Parser Error: {}", e);
             }
         }
-        Err(e) => {
-            eprintln!("Lexer Error: {}", e);
-        }
     }
-    // ... rest of your main function
+    println!("--------------------");
+    // --- End TEMPORARY Parser Test ---
+
+    // Later, the REPL will use parse_str (or similar)
 }
