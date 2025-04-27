@@ -1,4 +1,4 @@
-use crate::lexer::{LexerError, Token}; // Assuming Token is in lexer
+use crate::lexer::{LexerError, TokenKind}; // Assuming Token is in lexer
 use crate::types::Sexpr; // Assuming Sexpr is in types
 use std::fmt;
 use std::iter::Peekable;
@@ -6,7 +6,7 @@ use std::vec::IntoIter; // To iterate over Vec<Token>
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseError {
-    UnexpectedToken(Option<Token>, String), // Found token, Expected description
+    UnexpectedToken(Option<TokenKind>, String), // Found token, Expected description
     UnexpectedEof,
     LexerError(LexerError), // Propagate lexer errors if parsing directly from string later
     InvalidDotSyntax,       // For improper lists later
@@ -64,43 +64,43 @@ type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser {
     // We iterate over owned Tokens, consuming them.
-    tokens: Peekable<IntoIter<Token>>,
+    tokens: Peekable<IntoIter<TokenKind>>,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<TokenKind>) -> Self {
         Parser {
             tokens: tokens.into_iter().peekable(),
         }
     }
 
     // Consumes the next token if available.
-    fn next_token(&mut self) -> Option<Token> {
+    fn next_token(&mut self) -> Option<TokenKind> {
         self.tokens.next()
     }
 
     // Peeks at the next token without consuming.
-    fn peek_token(&mut self) -> Option<&Token> {
+    fn peek_token(&mut self) -> Option<&TokenKind> {
         self.tokens.peek()
     }
 
     /// Parses a single S-expression from the token stream.
     pub fn parse_expr(&mut self) -> ParseResult<Sexpr> {
         match self.next_token() {
-            Some(Token::LParen) => self.parse_list(),
-            Some(Token::Quote) => self.parse_quote(),
+            Some(TokenKind::LParen) => self.parse_list(),
+            Some(TokenKind::Quote) => self.parse_quote(),
             Some(atom) => self.parse_atom(atom), // Handle atoms if not '(' or '''
             None => Err(ParseError::UnexpectedEof), // No tokens left
         }
     }
 
     /// Parses an atomic expression (symbol, number, boolean, string).
-    fn parse_atom(&mut self, token: Token) -> ParseResult<Sexpr> {
+    fn parse_atom(&mut self, token: TokenKind) -> ParseResult<Sexpr> {
         match token {
-            Token::Symbol(s) => Ok(Sexpr::Symbol(s)),
-            Token::Number(n) => Ok(Sexpr::Number(n)),
-            Token::Boolean(b) => Ok(Sexpr::Boolean(b)),
-            Token::String(s) => Ok(Sexpr::String(s)),
+            TokenKind::Symbol(s) => Ok(Sexpr::Symbol(s)),
+            TokenKind::Number(n) => Ok(Sexpr::Number(n)),
+            TokenKind::Boolean(b) => Ok(Sexpr::Boolean(b)),
+            TokenKind::String(s) => Ok(Sexpr::String(s)),
             other_token => Err(ParseError::UnexpectedToken(
                 Some(other_token),
                 "an atom (symbol, number, boolean, string)".to_string(),
@@ -115,7 +115,7 @@ impl Parser {
         // Loop until we find the closing parenthesis ')'
         loop {
             match self.peek_token() {
-                Some(Token::RParen) => {
+                Some(TokenKind::RParen) => {
                     // Found the closing parenthesis
                     self.next_token(); // Consume ')'
                     // Handle empty list '()' -> Sexpr::Nil
@@ -187,13 +187,18 @@ impl Parser {
 
 // Helper function to lex and parse a string directly (useful for tests and REPL)
 pub fn parse_str(input: &str) -> ParseResult<Sexpr> {
-    let tokens = crate::lexer::tokenize(input)?; // Use tokenize from lexer module
+    let tokens = crate::lexer::tokenize(input)?
+        .into_iter()
+        .map(|token| token.kind)
+        .collect(); // Use tokenize from lexer module
     Parser::new(tokens).parse()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*; // Import items from parent module (Parser, ParseError, parse_str)
+    use crate::Span;
+    use crate::lexer::LexerErrorKind;
     use crate::types::Sexpr; // Import Sexpr too
 
     // Helper for asserting successful parsing
@@ -339,19 +344,28 @@ mod tests {
         assert_parse_error("(1 2", ParseError::UnexpectedToken(None, "')'".to_string()));
         assert_parse_error(
             "(1 . 2)",
-            ParseError::UnexpectedToken(Some(Token::Symbol(".".to_string())), "')'".to_string()),
+            ParseError::UnexpectedToken(
+                Some(TokenKind::Symbol(".".to_string())),
+                "')'".to_string(),
+            ),
         ); // Assuming dot not handled yet
         assert_parse_error(
             ")",
-            ParseError::UnexpectedToken(Some(Token::RParen), "an atom or '(' or '''".to_string()),
+            ParseError::UnexpectedToken(
+                Some(TokenKind::RParen),
+                "an atom or '(' or '''".to_string(),
+            ),
         ); // Simplified expected msg
         assert_parse_error(
             "(1))",
-            ParseError::UnexpectedToken(Some(Token::RParen), "end of input".to_string()),
+            ParseError::UnexpectedToken(Some(TokenKind::RParen), "end of input".to_string()),
         );
         assert_parse_error(
             "(')",
-            ParseError::UnexpectedToken(Some(Token::RParen), "an atom or '(' or '''".to_string()),
+            ParseError::UnexpectedToken(
+                Some(TokenKind::RParen),
+                "an atom or '(' or '''".to_string(),
+            ),
         ); // After quote, expects expression
         assert_parse_error("(", ParseError::UnexpectedToken(None, "')'".to_string())); // EOF inside list
     }
@@ -364,10 +378,19 @@ mod tests {
 
     #[test]
     fn test_parse_lexer_error_propagation() {
-        assert_parse_error("\"", ParseError::LexerError(LexerError::UnterminatedString)); // Propagates lexer error
+        assert_parse_error(
+            "\"",
+            ParseError::LexerError(LexerError {
+                error: LexerErrorKind::UnterminatedString,
+                span: Span { start: 0, end: 1 },
+            }),
+        ); // Propagates lexer error
         assert_parse_error(
             "(1 \"abc",
-            ParseError::LexerError(LexerError::UnterminatedString),
+            ParseError::LexerError(LexerError {
+                error: LexerErrorKind::UnterminatedString,
+                span: Span { start: 0, end: 6 },
+            }),
         );
     }
 
