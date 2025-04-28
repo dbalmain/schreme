@@ -16,7 +16,7 @@ This list outlines the planned development steps, subject to change as the proje
 * [ ] **Core Data Types (`types.rs`):** Define `Sexpr` enum (Symbol, Number, Boolean, List, Nil).
     * [x] Implement `Display` for pretty-printing `Sexpr`.
     * [ ] Add `Pair`/`Cons` cell representation (alternative/complement to `Vec<Sexpr>` for lists).
-    * [ ] Add `String` type.
+    * [x] Add `String` type.
     * [ ] Add `Vector` type (`#( ... )`).
     * [ ] Add `Character` type (`#\a`).
 * [x] **Lexer (`lexer.rs`):** Convert input string to `Token` stream.
@@ -36,8 +36,8 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Add comprehensive unit tests.
     * [ ] Add helpful explanations of errors, like Elm.
 * [ ] **Basic Environment (`environment.rs`):** Store variable bindings.
-    * [ ] Implement nested environments (for lexical scoping).
-    * [ ] Define/get variables.
+    * [x] Implement nested environments (for lexical scoping).
+    * [x] Define/get variables.
     * [ ] Handle `set!` for mutation.
 * [ ] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
     * [ ] Evaluate self-evaluating atoms (numbers, booleans, strings).
