@@ -6,6 +6,7 @@ pub mod source;
 pub mod types;
 
 pub use environment::{EnvError, Environment};
+pub use evaluator::{EvalError, evaluate};
 pub use lexer::{LexerError, Token, TokenKind, tokenize};
 pub use parser::{ParseError, Parser, parse_str};
 pub use source::Span;

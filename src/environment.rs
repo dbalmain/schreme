@@ -1,5 +1,3 @@
-// src/environment.rs
-
 use crate::source::Span;
 use crate::types::Node; // Values stored in the environment are Nodes
 use std::cell::RefCell;

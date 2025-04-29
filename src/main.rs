@@ -1,28 +1,44 @@
-use schreme::parser::parse_str; // Use parse_str
+use schreme::{Environment, evaluate, parser::parse_str}; // Use parse_str
 
 fn main() {
-    println!("Welcome to Rusty Scheme!");
+    println!("Welcome to Schreme!");
 
-    // --- TEMPORARY Parser Test ---
+    // Create a global environment for evaluation
+    let global_env = Environment::new();
+    // Optional: Pre-populate global env with primitives later
+
     let inputs = vec![
-        "(define x (+ 10 5.5))",
-        "; comment\n   '(\"hello\" #t (nested list))",
-        "()",
         "123",
-        "( unbalanced",   // Error case
-        "'",              // Error case
-        "\"unterminated", // Error case
+        "\"hello\"",
+        "#t",
+        "'symbol",   // quote symbol
+        "'(1 2 #f)", // quote list
+        // Add variable test once define works, or pre-define manually
+        // "x", // Error: unbound
+        "(quote two args)", // Error: quote args
+        "(1 2 3)",          // Error: 1 not procedure
     ];
 
+    println!("--- Evaluating Inputs ---");
     for input in inputs {
         println!("--------------------");
-        println!("Input:\n{}", input);
+        println!("Input: {}", input);
         match parse_str(input) {
-            // Use the helper function
-            Ok(sexpr) => {
-                println!("Parsed Sexpr: {:?}", sexpr);
-                // Also test Display impl
-                println!("Formatted: {}", sexpr);
+            Ok(node) => {
+                println!("Parsed: {:?}", node.kind); // Show parsed structure
+                // Evaluate the parsed node in the global environment
+                match evaluate(node, global_env.clone()) {
+                    // Clone the Rc to share env ownership
+                    Ok(result_node) => {
+                        println!("Result Kind: {:?}", result_node.kind);
+                        println!("Result Span: {:?}", result_node.span);
+                        println!("Formatted: {}", result_node); // Uses Display for Node/Sexpr
+                    }
+                    Err(e) => {
+                        eprintln!("Evaluation Error: {}", e);
+                        // TODO: Print better errors using span info + source context
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("Parser Error: {}", e);
@@ -30,7 +46,5 @@ fn main() {
         }
     }
     println!("--------------------");
-    // --- End TEMPORARY Parser Test ---
-
-    // Later, the REPL will use parse_str (or similar)
+    println!("--- End Evaluation ---");
 }
