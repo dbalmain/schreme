@@ -40,9 +40,9 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Define/get variables.
     * [ ] Handle `set!` for mutation.
 * [ ] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
-    * [ ] Evaluate self-evaluating atoms (numbers, booleans, strings).
-    * [ ] Evaluate symbols (variable lookup in environment).
-    * [ ] Implement `quote` special form.
+    * [x] Evaluate self-evaluating atoms (numbers, booleans, strings).
+    * [x] Evaluate symbols (variable lookup in environment).
+    * [x] Implement `quote` special form.
     * [ ] Implement `if` special form.
     * [ ] Implement `begin` special form.
     * [ ] Implement `define` special form (global/local).
@@ -86,6 +86,51 @@ This list outlines the planned development steps, subject to change as the proje
     * [ ] Evaluate existing `tree-sitter-scheme`.
     * [ ] Consider creating `tree-sitter-schreme` if syntax diverges significantly.
     * [ ] Explore using Tree-sitter *within* the LSP for faster, more resilient parsing for IDE features.
+*   [ ] **Debugger Implementation:** Provide step-through debugging capabilities.
+    *   [ ] **Foundation & Control:**
+        *   [ ] Define Breakpoint structure (file/line/column or span).
+        *   [ ] Implement setting/clearing breakpoints.
+        *   [ ] Modify Evaluator loop/structure to check for breakpoints and pause execution.
+        *   [ ] Implement execution control commands (Step In, Step Over, Step Out, Continue).
+    *   [ ] **State Inspection:**
+        *   [ ] Inspect current `Environment` bindings (variable names/values).
+        *   [ ] Implement call stack tracking during evaluation.
+        *   [ ] Display the current call stack.
+        *   [ ] Pretty-print `Sexpr`/`Node` values during inspection.
+    *   [ ] **Interface/Protocol:**
+        *   [ ] **Option A: Debug Adapter Protocol (DAP):**
+            *   [ ] Setup separate DAP server binary.
+            *   [ ] Implement DAP communication (JSON-RPC).
+            *   [ ] Handle DAP requests (setBreakpoints, configurationDone, threads, stackTrace, scopes, variables, continue, stepIn, etc.).
+            *   [ ] Send DAP events (stopped, terminated, output, etc.).
+        *   [ ] **Option B: REPL Integration:**
+            *   [ ] Add debug-specific commands to the REPL (`break`, `step`, `continue`, `print`, `stack`, etc.).
+    *   [ ] **Cranelift Backend Debugging (Later):**
+        *   [ ] Generate Debug Information (DWARF?) mapping compiled code to source Spans during Cranelift compilation.
+        *   [ ] Investigate integration with native debuggers (GDB/LLDB) via DWARF.
+        *   [ ] Explore JIT debugging hooks if using `cranelift-jit`.
+*   [ ] **Profiler Implementation:** Analyze performance characteristics.
+    *   [ ] **Data Collection Strategy:**
+        *   [ ] **Option A: Instrumentation:**
+            *   [ ] Instrument procedure calls (entry/exit time/count) in the evaluator.
+            *   [ ] Instrument primitive calls.
+        *   [ ] **Option B: Sampling:**
+            *   [ ] Periodically sample the interpreter's call stack.
+        *   [ ] Choose and implement one or both strategies.
+    *   [ ] **Metrics:**
+        *   [ ] Track time spent per function/primitive.
+        *   [ ] Track call counts per function/primitive.
+        *   [ ] (Optional) Track allocations per function.
+    *   [ ] **Interpreter Integration:**
+        *   [ ] Add hooks/wrappers around evaluation steps and function calls.
+        *   [ ] Manage profiler state (enabled/disabled, data storage).
+    *   [ ] **Data Reporting:**
+        *   [ ] Implement basic text-based report (e.g., table sorted by time).
+        *   [ ] Output data compatible with external tools (e.g., `perf` format, flamegraph collapsed stack format).
+        *   [ ] Implement flame graph generation (e.g., using `inferno`).
+    *   [ ] **Cranelift Backend Profiling (Later):**
+        *   [ ] Integrate with Cranelift/LLVM profiling features if applicable.
+        *   [ ] Correlate compiled code performance metrics back to Schreme source functions.
 * [ ] **Testing Framework:**
     * [ ] Develop infrastructure for running Scheme code tests against the interpreter.
     * [ ] Integrate with `cargo test`.
