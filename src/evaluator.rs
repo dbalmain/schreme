@@ -8,13 +8,13 @@ use std::rc::Rc;
 // --- Evaluation Error ---
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalError {
-    EnvError(EnvError),             // Errors from environment lookup
-    NotAProcedure(Sexpr, Span),     // Tried to call something that isn't a procedure
-    InvalidArguments(String, Span), // Mismatched arity or wrong type of args
-    NotAList(Sexpr, Span),          // Expected a list for procedure call or special form
-    NotASymbol(Sexpr, Span),        // Expected a symbol (e.g., for define/set!)
+    EnvError(EnvError),               // Errors from environment lookup
+    NotAProcedure(Sexpr, Span),       // Tried to call something that isn't a procedure
+    InvalidArguments(String, Span),   // Mismatched arity or wrong type of args
+    NotASymbol(Sexpr, Span),          // Expected a symbol (e.g., for define/set!)
     InvalidSpecialForm(String, Span), // Malformed special form (e.g., (if cond))
-                                    // Add more later: DivideByZero, WrongType, MacroError, etc.
+    UnexpectedError(Sexpr, Span, String), // Expected a list for procedure call or special form
+                                      // Add more later: DivideByZero, WrongType, MacroError, etc.
 }
 
 impl fmt::Display for EvalError {
@@ -30,11 +30,9 @@ impl fmt::Display for EvalError {
             EvalError::InvalidArguments(msg, _span) => {
                 write!(f, "Evaluation Error: Invalid arguments - {}", msg)
             }
-            EvalError::NotAList(sexpr, _span) => write!(
-                f,
-                "Evaluation Error: Expected a list structure, but got: {}",
-                sexpr
-            ),
+            EvalError::UnexpectedError(sexpr, _span, description) => {
+                write!(f, "Unexpected Error: {}: {}", description, sexpr)
+            }
             EvalError::NotASymbol(sexpr, _span) => {
                 write!(f, "Evaluation Error: Expected a symbol, but got: {}", sexpr)
             }
@@ -88,41 +86,40 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
         // 3. Lists: Could be special forms or procedure calls
         Sexpr::List(ref elements) => {
-            if elements.is_empty() {
-                // Evaluating an empty list '()' which is Sexpr::Nil
-                // Nil evaluates to itself, so we return the original Node
-                return Ok(node); // Or create a new Node { kind: Sexpr::Nil, span: node.span }
-            }
-
             // Check the first element to see if it's a special form or procedure call
-            let first = &elements[0];
-            let rest = &elements[1..];
+            if let [first, rest @ ..] = &elements[..] {
+                match first.kind {
+                    // 3a. Special Form: 'quote'
+                    Sexpr::Symbol(ref sym_name) if sym_name == "quote" => {
+                        evaluate_quote(rest, node.span) // Pass span of the whole (quote ...) form
+                    }
 
-            match first.kind {
-                // 3a. Special Form: 'quote'
-                Sexpr::Symbol(ref sym_name) if sym_name == "quote" => {
-                    evaluate_quote(rest, node.span) // Pass span of the whole (quote ...) form
+                    // 3b. Special Form: 'if' (Implement next)
+                    // Sexpr::Symbol(ref sym_name) if sym_name == "if" => { ... }
+
+                    // 3c. Special Form: 'define' (Implement later)
+                    // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
+
+                    // 3d. Special Form: 'set!' (Implement later)
+                    // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
+
+                    // 3e. Special Form: 'lambda' (Implement later)
+                    // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
+
+                    // 3f. Procedure Call (Implement later)
+                    _ => {
+                        // Evaluate the operator and operands, then apply
+                        // evaluate_procedure_call(first, rest, env, node.span)
+                        // For now, error - we haven't implemented calls yet
+                        Err(EvalError::NotAProcedure(first.kind.clone(), first.span)) // Placeholder error
+                    }
                 }
-
-                // 3b. Special Form: 'if' (Implement next)
-                // Sexpr::Symbol(ref sym_name) if sym_name == "if" => { ... }
-
-                // 3c. Special Form: 'define' (Implement later)
-                // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
-
-                // 3d. Special Form: 'set!' (Implement later)
-                // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
-
-                // 3e. Special Form: 'lambda' (Implement later)
-                // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
-
-                // 3f. Procedure Call (Implement later)
-                _ => {
-                    // Evaluate the operator and operands, then apply
-                    // evaluate_procedure_call(first, rest, env, node.span)
-                    // For now, error - we haven't implemented calls yet
-                    Err(EvalError::NotAProcedure(first.kind.clone(), first.span)) // Placeholder error
-                }
+            } else {
+                Err(EvalError::UnexpectedError(
+                    node.kind,
+                    node.span,
+                    "Empty list should have been parsed as Nil".to_string(),
+                )) // Placeholder error
             }
         } // Handle other Sexpr kinds if they exist (e.g., Pair, Vector) later
     }
