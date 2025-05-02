@@ -72,30 +72,32 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
     // let current_env = env;
     // loop { ... }
 
-    match node.kind {
+    match &node.kind {
         // 1. Self-evaluating atoms: Numbers, Strings, Booleans, Nil
         Sexpr::Number(_) | Sexpr::String(_) | Sexpr::Boolean(_) | Sexpr::Nil => {
             Ok(node) // Return the node itself (or a clone if ownership is an issue)
         }
 
         // 2. Symbols: Look up in the environment
-        Sexpr::Symbol(ref name) => {
+        Sexpr::Symbol(name) => {
             // Use the symbol's span for error reporting if lookup fails
             Ok(env.borrow().get(name, node.span)?) // Propagate EnvError via From trait
         }
 
         // 3. Lists: Could be special forms or procedure calls
-        Sexpr::List(ref elements) => {
+        Sexpr::List(elements) => {
             // Check the first element to see if it's a special form or procedure call
             if let [first, rest @ ..] = &elements[..] {
-                match first.kind {
+                match &first.kind {
                     // 3a. Special Form: 'quote'
-                    Sexpr::Symbol(ref sym_name) if sym_name == "quote" => {
+                    Sexpr::Symbol(sym_name) if sym_name == "quote" => {
                         evaluate_quote(rest, node.span) // Pass span of the whole (quote ...) form
                     }
 
                     // 3b. Special Form: 'if' (Implement next)
-                    // Sexpr::Symbol(ref sym_name) if sym_name == "if" => { ... }
+                    Sexpr::Symbol(sym_name) if sym_name == "if" => {
+                        evaluate_if(rest, env, node.span) // Pass env and whole form's span
+                    }
 
                     // 3c. Special Form: 'define' (Implement later)
                     // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
@@ -127,19 +129,50 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
 // --- Helper for 'quote' ---
 fn evaluate_quote(operands: &[Node], span: Span) -> EvalResult {
-    // (quote operand)
-    if operands.len() != 1 {
-        return Err(EvalError::InvalidSpecialForm(
+    if let [node] = operands {
+        // The operand is already a Node, just return it (or a clone).
+        // Quote returns the operand unevaluated.
+        Ok(node.clone())
+    } else {
+        Err(EvalError::InvalidSpecialForm(
             "quote expects exactly one argument".to_string(),
             span, // Use the span of the whole (quote ...) form
-        ));
+        ))
     }
-    // Quote returns the operand unevaluated.
-    // The operand is already a Node, just return it (or a clone).
-    Ok(operands[0].clone())
 }
 
-// --- Other helpers (if, define, set!, lambda, procedure calls) will go here ---
+fn evaluate_if(operands: &[Node], env: Rc<RefCell<Environment>>, span: Span) -> EvalResult {
+    if let [condition, consequent, maybe_alternate @ ..] = operands
+        && maybe_alternate.len() <= 1
+    {
+        // Evaluate the condition first
+        let condition_result = evaluate(condition.clone(), env.clone())?;
+
+        // Determine truthiness: In Scheme, only #f is false, everything else is true.
+        let is_truthy = match condition_result.kind {
+            Sexpr::Boolean(false) => false,
+            _ => true, // All other values (#t, numbers, strings, lists, symbols, etc.) are true
+        };
+
+        if is_truthy {
+            evaluate(consequent.clone(), env) // Return result of consequent evaluation
+        } else {
+            if let [alternate] = maybe_alternate {
+                evaluate(alternate.clone(), env) // Return result of alternate evaluation
+            } else {
+                Ok(Node {
+                    kind: Sexpr::Nil,
+                    span,
+                })
+            }
+        }
+    } else {
+        Err(EvalError::InvalidSpecialForm(
+            "if expects condition, consequent, and optional alternate".to_string(),
+            span, // Span of the whole (if ...) form
+        ))
+    }
+}
 
 // --- Unit Tests ---
 #[cfg(test)]
@@ -259,6 +292,92 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_if_true() {
+        assert_eval_kind("(if #t 1 2)", Sexpr::Number(1.0), None);
+        assert_eval_kind("(if #t 1)", Sexpr::Number(1.0), None); // No alternate
+        assert_eval_kind("(if 0 1 2)", Sexpr::Number(1.0), None); // 0 is true
+        assert_eval_kind("(if '() 1 2)", Sexpr::Number(1.0), None); // '() is true
+        assert_eval_kind("(if \"hello\" 1 2)", Sexpr::Number(1.0), None); // String is true
+        assert_eval_kind("(if (quote x) 1 2)", Sexpr::Number(1.0), None); // Symbol is true
+    }
+
+    #[test]
+    fn test_eval_if_false() {
+        assert_eval_kind("(if #f 1 2)", Sexpr::Number(2.0), None);
+        assert_eval_kind("(if #f 1)", Sexpr::Nil, None); // No alternate, returns Nil (our choice)
+    }
+
+    #[test]
+    fn test_eval_if_nested() {
+        let env = Environment::new();
+        env.borrow_mut().define(
+            "x".to_string(),
+            Node {
+                kind: Sexpr::Boolean(true),
+                span: Span::default(),
+            },
+        );
+        env.borrow_mut().define(
+            "y".to_string(),
+            Node {
+                kind: Sexpr::Boolean(false),
+                span: Span::default(),
+            },
+        );
+
+        assert_eval_kind("(if x 1 (if y 2 3))", Sexpr::Number(1.0), Some(env.clone()));
+        assert_eval_kind("(if y 1 (if x 2 3))", Sexpr::Number(2.0), Some(env.clone()));
+    }
+
+    #[test]
+    fn test_eval_if_evaluates_condition() {
+        // Ensure the condition is actually evaluated
+        let env = Environment::new();
+        env.borrow_mut().define(
+            "cond".to_string(),
+            Node {
+                kind: Sexpr::Boolean(false),
+                span: Span::default(),
+            },
+        );
+        assert_eval_kind("(if cond 1 2)", Sexpr::Number(2.0), Some(env));
+    }
+
+    #[test]
+    fn test_eval_if_does_not_evaluate_unused_branch() {
+        // This is harder to test directly without side effects (like define/set! or print)
+        // We can test it indirectly by putting an unbound variable in the unused branch.
+        let env = Environment::new();
+        // (if #t 'good unbound-variable) should evaluate to 'good without error
+        assert_eval_kind(
+            "(if #t 'good unbound-variable)",
+            Sexpr::Symbol("good".to_string()),
+            Some(env.clone()),
+        );
+        // (if #f unbound-variable 'good) should evaluate to 'good without error
+        assert_eval_kind(
+            "(if #f unbound-variable 'good)",
+            Sexpr::Symbol("good".to_string()),
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_eval_if_error_arity() {
+        let arity_error = &EvalError::InvalidSpecialForm("".into(), Span::default());
+        assert_eval_error("(if)", arity_error, None);
+        assert_eval_error("(if #t)", arity_error, None);
+        assert_eval_error("(if #t 1 2 3)", arity_error, None);
+    }
+
+    #[test]
+    fn test_eval_if_error_in_condition() {
+        let unbound_error =
+            &EvalError::EnvError(EnvError::UnboundVariable("".into(), Span::default())); // Dummy
+        assert_eval_error("(if unbound 1 2)", unbound_error, None);
+    }
+
+    #[test]
     fn test_eval_list_placeholder_error() {
         // Evaluating a list where the first element is not a known special form
         // or procedure (which we haven't implemented yet) should error.
@@ -269,7 +388,7 @@ mod tests {
 
         // ("hello" 1) -> Error
         let not_proc_error_str =
-            EvalError::NotAProcedure(Sexpr::String("".into()), Span::default()); // Dummy
+            EvalError::NotAProcedure(Sexpr::String("".into()), Span::default());
         assert_eval_error("(\"hello\" 1)", &not_proc_error_str, Some(env.clone()));
     }
 }

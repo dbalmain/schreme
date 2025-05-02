@@ -43,7 +43,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Evaluate self-evaluating atoms (numbers, booleans, strings).
     * [x] Evaluate symbols (variable lookup in environment).
     * [x] Implement `quote` special form.
-    * [ ] Implement `if` special form.
+    * [x] Implement `if` special form.
     * [ ] Implement `begin` special form.
     * [ ] Implement `define` special form (global/local).
     * [ ] Implement `set!` special form.
