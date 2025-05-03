@@ -74,7 +74,11 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
     match &node.kind {
         // 1. Self-evaluating atoms: Numbers, Strings, Booleans, Nil
-        Sexpr::Number(_) | Sexpr::String(_) | Sexpr::Boolean(_) | Sexpr::Nil => {
+        Sexpr::Number(_)
+        | Sexpr::String(_)
+        | Sexpr::Boolean(_)
+        | Sexpr::Nil
+        | Sexpr::Procedure(_) => {
             Ok(node) // Return the node itself (or a clone if ownership is an issue)
         }
 
@@ -119,14 +123,6 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                 )) // Placeholder error
             }
         } // Handle other Sexpr kinds if they exist (e.g., Pair, Vector) later
-        Sexpr::Procedure(_) => {
-            Err(EvalError::UnexpectedError(
-                node.kind,
-                node.span,
-                "Parser doesn't return a Procedure so it should never be evaluated here"
-                    .to_string(),
-            )) // Placeholder error
-        }
     }
 }
 
@@ -319,19 +315,29 @@ impl Sexpr {
     }
 }
 
-pub fn prim_add(args: Vec<Node>, span: Span) -> EvalResult {
-    // (+) -> 0
-    // (+ 1 2 3) -> 6
-    let mut sum = 0.0;
+pub fn prim_fold_numbers<F: Fn(f64, f64) -> f64>(
+    args: Vec<Node>,
+    span: Span,
+    start: f64,
+    func: F,
+    operator: &str,
+) -> EvalResult {
+    let mut acc = start;
     for (i, node) in args.iter().enumerate() {
-        let num = expect_number!(node, span, "+", i + 1);
-        sum += num;
+        let num = expect_number!(node, span, operator, i + 1);
+        acc = func(acc, num);
     }
     // Result needs to be a Node with a span. Let's use the call span.
     Ok(Node {
-        kind: Sexpr::Number(sum),
+        kind: Sexpr::Number(acc),
         span,
     })
+}
+
+pub fn prim_add(args: Vec<Node>, span: Span) -> EvalResult {
+    // (+) -> 0
+    // (+ 1 2 3) -> 6
+    prim_fold_numbers(args, span, 0.0, |acc, val| acc + val, "+")
 }
 
 pub fn prim_sub(args: Vec<Node>, span: Span) -> EvalResult {
@@ -361,15 +367,7 @@ pub fn prim_sub(args: Vec<Node>, span: Span) -> EvalResult {
 pub fn prim_mul(args: Vec<Node>, span: Span) -> EvalResult {
     // (*) -> 1
     // (* 1 2 3) -> 6
-    let mut product = 1.0;
-    for (i, node) in args.iter().enumerate() {
-        let num = expect_number!(node, span, "*", i + 1);
-        product *= num;
-    }
-    Ok(Node {
-        kind: Sexpr::Number(product),
-        span,
-    })
+    prim_fold_numbers(args, span, 1.0, |acc, val| acc * val, "*")
 }
 
 pub fn prim_div(args: Vec<Node>, span: Span) -> EvalResult {
