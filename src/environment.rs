@@ -55,7 +55,11 @@ impl Environment {
             env.add_primitive("*", crate::evaluator::prim_mul);
             env.add_primitive("/", crate::evaluator::prim_div);
             env.add_primitive("=", crate::evaluator::prim_equals);
-            // Add more here: <, >, cons, car, cdr, list, null?, etc.
+            env.add_primitive("<", crate::evaluator::prim_less_than);
+            env.add_primitive("<=", crate::evaluator::prim_less_than_or_equals);
+            env.add_primitive(">", crate::evaluator::prim_greater_than);
+            env.add_primitive(">=", crate::evaluator::prim_greater_than_or_equals);
+            // Add more here: cons, car, cdr, list, null?, etc.
         }
         env_ptr
     }

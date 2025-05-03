@@ -51,7 +51,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [ ] Implement robust error handling (`EvalError`).
 * [ ] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
-    * [?] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
+    * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
     * [ ] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
     * [ ] List operations (`cons`, `car`, `cdr`, `list`).
     * [ ] Equality (`eq?`, `eqv?`, `equal?`).

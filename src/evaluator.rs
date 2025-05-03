@@ -410,16 +410,20 @@ pub fn prim_div(args: Vec<Node>, span: Span) -> EvalResult {
     }
 }
 
-// Add more primitives: =, <, >, <=, >=, cons, car, cdr, list, null?, pair?, etc.
-// Example:
-pub fn prim_equals(args: Vec<Node>, span: Span) -> EvalResult {
+pub fn prim_all_numbers<F: Fn(f64, f64) -> bool>(
+    args: Vec<Node>,
+    span: Span,
+    compare: F,
+    operator: &str,
+) -> EvalResult {
     // (= n1 n2 ...) -> boolean
-    check_arity!(args, min 2, span, "=");
-    let first_val = expect_number!(&args[0], span, "=", 1);
+    check_arity!(args, min 2, span, operator);
+    let mut last_val = expect_number!(&args[0], span, operator, 1);
     let mut result = true;
     for (index, arg) in args.iter().enumerate().skip(1) {
         let val = expect_number!(arg, span, "=", index + 1);
-        result = result && val == first_val;
+        result = result && compare(last_val, val);
+        last_val = val;
     }
     Ok(Node {
         kind: Sexpr::Boolean(result),
@@ -427,6 +431,27 @@ pub fn prim_equals(args: Vec<Node>, span: Span) -> EvalResult {
     })
 }
 
+pub fn prim_equals(args: Vec<Node>, span: Span) -> EvalResult {
+    prim_all_numbers(args, span, |left, right| left == right, "=")
+}
+
+pub fn prim_less_than(args: Vec<Node>, span: Span) -> EvalResult {
+    prim_all_numbers(args, span, |left, right| left < right, "<")
+}
+
+pub fn prim_less_than_or_equals(args: Vec<Node>, span: Span) -> EvalResult {
+    prim_all_numbers(args, span, |left, right| left <= right, "<=")
+}
+
+pub fn prim_greater_than(args: Vec<Node>, span: Span) -> EvalResult {
+    prim_all_numbers(args, span, |left, right| left > right, ">")
+}
+
+pub fn prim_greater_than_or_equals(args: Vec<Node>, span: Span) -> EvalResult {
+    prim_all_numbers(args, span, |left, right| left >= right, ">=")
+}
+
+// Add more primitives: cons, car, cdr, list, null?, pair?, etc.
 // --- Unit Tests ---
 #[cfg(test)]
 mod tests {
@@ -668,6 +693,15 @@ mod tests {
         assert_eval_kind("(= 5 5 5 5)", Sexpr::Boolean(true), None);
         assert_eval_kind("(= 5 6)", Sexpr::Boolean(false), None);
         assert_eval_kind("(= 5 5 6)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(< 4 5 6)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(< 5 5 6)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(<= 5 5 6)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 5 5 5)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 6 5 5)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(> 6 5 5)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(> 6 5 4)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(< 1 2 3 4 5 6)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 5 5 4 4 4 3)", Sexpr::Boolean(true), None);
     }
 
     #[test]
