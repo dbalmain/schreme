@@ -1,4 +1,4 @@
-use crate::source::Span;
+use crate::{evaluator::EvalResult, source::Span};
 use std::fmt; // For custom display formatting
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,11 +31,11 @@ pub enum Sexpr {
     String(String),  // For string literals "hello\n"
     List(Vec<Node>), // e.g., (+ 1 2), (define x 10)
     Nil,             // Represents the empty list '()
-
-                     // --- Future additions ---
-                     // Pair(Box<Sexpr>, Box<Sexpr>), // For dotted pairs, alternative list rep
-                     // Primitive(PrimitiveFunc),
-                     // Lambda(LambdaExpr),
+    Procedure(Procedure),
+    // --- Future additions ---
+    // Pair(Box<Sexpr>, Box<Sexpr>), // For dotted pairs, alternative list rep
+    // Primitive(PrimitiveFunc),
+    // Lambda(LambdaExpr),
 }
 
 // Implement Display trait for pretty printing the Sexpr values
@@ -46,7 +46,6 @@ impl fmt::Display for Sexpr {
             Sexpr::Number(n) => write!(f, "{}", n),
             Sexpr::Boolean(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
             Sexpr::List(list) => {
-                write!(f, "(")?;
                 let mut first = true;
                 for expr in list {
                     if !first {
@@ -62,25 +61,53 @@ impl fmt::Display for Sexpr {
                 write!(
                     f,
                     "\"{}\"",
-                    str.replace("\"", "\\\"")
-                        .replace("\n", "\\n")
-                        .replace("\r", "\\r")
-                        .replace("\t", "\\t")
+                    str.chars().fold(String::new(), |mut acc, char| {
+                        match char {
+                            '"' => acc.push_str("\\\""),
+                            '\n' => acc.push_str("\\n"),
+                            '\r' => acc.push_str("\\r"),
+                            '\t' => acc.push_str("\\t"),
+                            c => acc.push(c),
+                        }
+                        acc
+                    })
                 )
             }
+            Sexpr::Procedure(procedure) => match procedure {
+                Procedure::Primitive(_, name) => write!(f, "#<primitive:{}>", name),
+            },
         }
     }
 }
 
-// --- Placeholders for future types (optional for now) ---
-/*
-#[derive(Debug, Clone, PartialEq)]
-pub struct LambdaExpr {
-    pub params: Vec<String>, // Parameter names
-    pub body: Box<Sexpr>,    // Body expression
-    // pub env: Environment, // Closure environment - needs careful design
+pub type PrimitiveFunc = fn(Vec<Node>, Span) -> EvalResult;
+
+#[derive(Clone)] // Need Clone for Sexpr::Procedure
+pub enum Procedure {
+    Primitive(PrimitiveFunc, String), // The function pointer and its name (for display/debug)
+                                      // Lambda(LambdaData), // Placeholder for user-defined functions
 }
 
-// Type alias for built-in primitive functions
-pub type PrimitiveFunc = fn(Vec<Sexpr>) -> Result<Sexpr, String>; // Simple signature for now
-*/
+impl fmt::Debug for Procedure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Procedure::Primitive(_, name) => write!(f, "Primitive({})", name),
+            // Procedure::Lambda(_) => write!(f, "Lambda(...)"), // Later
+        }
+    }
+}
+
+// Procedures should be comparable based on identity or name if needed,
+// but function pointers don't implement PartialEq directly.
+// We might need custom PartialEq later if exact procedure comparison is needed.
+impl PartialEq for Procedure {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Procedure::Primitive(_f1, n1), Procedure::Primitive(_f2, n2)) => {
+                // Compare function pointers for identity and maybe names
+                n1 == n2
+            } // Add Lambda comparison later
+              // _ => false,
+        }
+    }
+}

@@ -1,6 +1,6 @@
 use crate::environment::{EnvError, Environment};
 use crate::source::Span;
-use crate::types::{Node, Sexpr};
+use crate::types::{Node, Procedure, Sexpr};
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -60,7 +60,7 @@ impl From<EnvError> for EvalError {
 }
 
 // Result type alias for convenience
-type EvalResult<T = Node> = Result<T, EvalError>;
+pub type EvalResult<T = Node> = Result<T, EvalError>;
 
 // --- Evaluate Function ---
 
@@ -109,12 +109,7 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                     // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
 
                     // 3f. Procedure Call (Implement later)
-                    _ => {
-                        // Evaluate the operator and operands, then apply
-                        // evaluate_procedure_call(first, rest, env, node.span)
-                        // For now, error - we haven't implemented calls yet
-                        Err(EvalError::NotAProcedure(first.kind.clone(), first.span)) // Placeholder error
-                    }
+                    _ => evaluate_procedure(first, rest, env, node.span),
                 }
             } else {
                 Err(EvalError::UnexpectedError(
@@ -124,10 +119,63 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                 )) // Placeholder error
             }
         } // Handle other Sexpr kinds if they exist (e.g., Pair, Vector) later
+        Sexpr::Procedure(_) => {
+            Err(EvalError::UnexpectedError(
+                node.kind,
+                node.span,
+                "Parser doesn't return a Procedure so it should never be evaluated here"
+                    .to_string(),
+            )) // Placeholder error
+        }
     }
 }
 
-// --- Helper for 'quote' ---
+fn evaluate_procedure(
+    operator: &Node,
+    operands: &[Node],
+    env: Rc<RefCell<Environment>>,
+    span: Span,
+) -> EvalResult {
+    let operator_result_node = evaluate(operator.clone(), env.clone()).map_err(|_err| {
+        EvalError::NotAProcedure(
+            operator.clone().kind, // What was actually found
+            operator.span,         // Span of the operator expression
+        )
+    })?;
+
+    // 2. Check if the result is a procedure
+    let procedure = match operator_result_node.kind {
+        Sexpr::Procedure(proc) => proc, // Extract the Procedure enum
+        _ => {
+            return Err(EvalError::NotAProcedure(
+                operator_result_node.kind, // What was actually found
+                operator.span,             // Span of the operator expression
+            ));
+        }
+    };
+
+    // 3. Evaluate the operands
+    let mut evaluated_args: Vec<Node> = Vec::with_capacity(operands.len());
+    for operand_node in operands {
+        // Evaluate each operand in the current environment
+        evaluated_args.push(evaluate(operand_node.clone(), env.clone())?);
+    }
+
+    // 4. Apply the procedure
+    match procedure {
+        Procedure::Primitive(func, _) => {
+            // Call the Rust function with evaluated args and original call span
+            func(evaluated_args, span)
+        } // Procedure::Lambda(lambda_data) => {
+          //     // - Create a new environment enclosing the lambda's captured env
+          //     // - Bind lambda parameters to evaluated_args in the new env
+          //     // - Evaluate the lambda body in the new env
+          //     // - Handle TCO here eventually
+          //     unimplemented!("Lambda evaluation not yet implemented");
+          // }
+    }
+}
+
 fn evaluate_quote(operands: &[Node], span: Span) -> EvalResult {
     if let [node] = operands {
         // The operand is already a Node, just return it (or a clone).
@@ -174,6 +222,213 @@ fn evaluate_if(operands: &[Node], env: Rc<RefCell<Environment>>, span: Span) -> 
     }
 }
 
+// Checks the number of arguments
+macro_rules! check_arity {
+    ($args:expr, $expected:expr, $span:expr, $name:expr) => {
+        if $args.len() != $expected {
+            return Err(EvalError::InvalidArguments(
+                format!(
+                    "Primitive '{}' expects exactly {} arguments, got {}",
+                    $name,
+                    $expected,
+                    $args.len()
+                ),
+                $span,
+            ));
+        }
+    };
+    // Variant for minimum number of args
+    ($args:expr, min $expected:expr, $span:expr, $name:expr) => {
+        if $args.len() < $expected {
+            return Err(EvalError::InvalidArguments(
+                format!(
+                    "Primitive '{}' expects at least {} arguments, got {}",
+                    $name,
+                    $expected,
+                    $args.len()
+                ),
+                $span,
+            ));
+        }
+    };
+    // Variant for range of args (inclusive)
+    ($args:expr, $min:expr, $max:expr, $span:expr, $name:expr) => {
+        if !($min..=$max).contains(&$args.len()) {
+            return Err(EvalError::InvalidArguments(
+                format!(
+                    "Primitive '{}' expects between {} and {} arguments, got {}",
+                    $name,
+                    $min,
+                    $max,
+                    $args.len()
+                ),
+                $span,
+            ));
+        }
+    };
+}
+
+// Extracts a number from a Node or returns WrongType error
+macro_rules! expect_number {
+    ($node:expr, $span:expr, $name:expr, $arg_pos:expr) => {
+        match $node.kind {
+            Sexpr::Number(n) => n,
+            _ => {
+                return Err(EvalError::InvalidArguments(
+                    // Or define a dedicated WrongType error
+                    format!(
+                        "Primitive '{}' expects a number for argument {}, got {}",
+                        $name,
+                        $arg_pos,
+                        $node.kind.type_name()
+                    ),
+                    $span, // Use call span for arg type errors
+                ));
+            }
+        }
+    };
+    // Variant without arg_pos specified
+    ($node:expr, $span:expr, $name:expr) => {
+        match $node.kind {
+            Sexpr::Number(n) => n,
+            _ => {
+                return Err(EvalError::InvalidArguments(
+                    format!(
+                        "Primitive '{}' expects number arguments, got {}",
+                        $name,
+                        $node.kind.type_name()
+                    ),
+                    $span,
+                ))
+            }
+        }
+    };
+}
+
+impl Sexpr {
+    fn type_name(&self) -> &'static str {
+        match self {
+            Sexpr::Number(_) => "number",
+            Sexpr::Symbol(_) => "symbol",
+            Sexpr::Boolean(_) => "boolean",
+            Sexpr::String(_) => "string",
+            Sexpr::List(_) => "list",
+            Sexpr::Nil => "nil",
+            Sexpr::Procedure(_) => "procedure",
+        }
+    }
+}
+
+pub fn prim_add(args: Vec<Node>, span: Span) -> EvalResult {
+    // (+) -> 0
+    // (+ 1 2 3) -> 6
+    let mut sum = 0.0;
+    for (i, node) in args.iter().enumerate() {
+        let num = expect_number!(node, span, "+", i + 1);
+        sum += num;
+    }
+    // Result needs to be a Node with a span. Let's use the call span.
+    Ok(Node {
+        kind: Sexpr::Number(sum),
+        span,
+    })
+}
+
+pub fn prim_sub(args: Vec<Node>, span: Span) -> EvalResult {
+    // (- x) -> -x
+    // (- x y z) -> x - y - z
+    check_arity!(args, min 1, span, "-");
+    let first_num = expect_number!(&args[0], span, "-", 1);
+
+    if args.len() == 1 {
+        Ok(Node {
+            kind: Sexpr::Number(-first_num),
+            span,
+        })
+    } else {
+        let mut result = first_num;
+        for (i, node) in args.iter().skip(1).enumerate() {
+            let num = expect_number!(node, span, "-", i + 2);
+            result -= num;
+        }
+        Ok(Node {
+            kind: Sexpr::Number(result),
+            span,
+        })
+    }
+}
+
+pub fn prim_mul(args: Vec<Node>, span: Span) -> EvalResult {
+    // (*) -> 1
+    // (* 1 2 3) -> 6
+    let mut product = 1.0;
+    for (i, node) in args.iter().enumerate() {
+        let num = expect_number!(node, span, "*", i + 1);
+        product *= num;
+    }
+    Ok(Node {
+        kind: Sexpr::Number(product),
+        span,
+    })
+}
+
+pub fn prim_div(args: Vec<Node>, span: Span) -> EvalResult {
+    // (/ x) -> 1/x
+    // (/ x y z) -> x / y / z
+    check_arity!(args, min 1, span, "/");
+    let first_num = expect_number!(&args[0], span, "/", 1);
+    if first_num == 0.0 && args.len() > 1 {
+        // Check potential division by zero if it's not the only arg
+        // Or let Rust panic/return Inf/NaN? Let's allow Inf/NaN for now.
+    }
+
+    if args.len() == 1 {
+        if first_num == 0.0 {
+            return Err(EvalError::InvalidArguments(
+                "Division by zero: (/ 0)".to_string(),
+                span,
+            ));
+        }
+        Ok(Node {
+            kind: Sexpr::Number(1.0 / first_num),
+            span,
+        })
+    } else {
+        let mut result = first_num;
+        for (i, node) in args.iter().skip(1).enumerate() {
+            let num = expect_number!(node, span, "/", i + 2);
+            if num == 0.0 {
+                return Err(EvalError::InvalidArguments(
+                    "Division by zero".to_string(),
+                    span,
+                ));
+            }
+            result /= num;
+        }
+        Ok(Node {
+            kind: Sexpr::Number(result),
+            span,
+        })
+    }
+}
+
+// Add more primitives: =, <, >, <=, >=, cons, car, cdr, list, null?, pair?, etc.
+// Example:
+pub fn prim_equals(args: Vec<Node>, span: Span) -> EvalResult {
+    // (= n1 n2 ...) -> boolean
+    check_arity!(args, min 2, span, "=");
+    let first_val = expect_number!(&args[0], span, "=", 1);
+    let mut result = true;
+    for (index, arg) in args.iter().enumerate().skip(1) {
+        let val = expect_number!(arg, span, "=", index + 1);
+        result = result && val == first_val;
+    }
+    Ok(Node {
+        kind: Sexpr::Boolean(result),
+        span,
+    })
+}
+
 // --- Unit Tests ---
 #[cfg(test)]
 mod tests {
@@ -183,7 +438,7 @@ mod tests {
 
     // Helper to evaluate input string and check result kind (ignores span)
     fn assert_eval_kind(input: &str, expected_kind: Sexpr, env: Option<Rc<RefCell<Environment>>>) {
-        let env = env.unwrap_or_else(Environment::new); // Use provided env or create new global one
+        let env = env.unwrap_or_else(Environment::new_global_populated); // Use provided env or create new global one
         match parse_str(input) {
             Ok(node) => match evaluate(node, env) {
                 Ok(result_node) => {
@@ -201,7 +456,7 @@ mod tests {
         expected_error_variant: &EvalError,
         env: Option<Rc<RefCell<Environment>>>,
     ) {
-        let env = env.unwrap_or_else(Environment::new);
+        let env = env.unwrap_or_else(Environment::new_global_populated); // Use provided env or create new global one
         match parse_str(input) {
             Ok(node) => match evaluate(node, env) {
                 Ok(result) => panic!(
@@ -390,5 +645,61 @@ mod tests {
         let not_proc_error_str =
             EvalError::NotAProcedure(Sexpr::String("".into()), Span::default());
         assert_eval_error("(\"hello\" 1)", &not_proc_error_str, Some(env.clone()));
+    }
+
+    #[test]
+    fn test_eval_primitives_arithmetic() {
+        assert_eval_kind("(+ 1 2)", Sexpr::Number(3.0), None);
+        assert_eval_kind("(+ 10 20 30 40)", Sexpr::Number(100.0), None);
+        assert_eval_kind("(+)", Sexpr::Number(0.0), None); // Add identity
+        assert_eval_kind("(- 10 3)", Sexpr::Number(7.0), None);
+        assert_eval_kind("(- 5)", Sexpr::Number(-5.0), None);
+        assert_eval_kind("(- 10 3 2)", Sexpr::Number(5.0), None);
+        assert_eval_kind("(* 2 3)", Sexpr::Number(6.0), None);
+        assert_eval_kind("(* 2 3 4)", Sexpr::Number(24.0), None);
+        assert_eval_kind("(*)", Sexpr::Number(1.0), None); // Multiply identity
+        assert_eval_kind("(/ 10 2)", Sexpr::Number(5.0), None);
+        assert_eval_kind("(/ 10 4)", Sexpr::Number(2.5), None);
+        assert_eval_kind("(/ 20 2 5)", Sexpr::Number(2.0), None);
+        assert_eval_kind("(/ 5)", Sexpr::Number(0.2), None); // 1/5
+    }
+
+    #[test]
+    fn test_eval_primitives_comparison() {
+        assert_eval_kind("(= 5 5)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(= 5 5 5 5)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(= 5 6)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(= 5 5 6)", Sexpr::Boolean(false), None);
+    }
+
+    #[test]
+    fn test_eval_primitives_nested_calls() {
+        assert_eval_kind("(+ 1 (* 2 3))", Sexpr::Number(7.0), None);
+        assert_eval_kind("(- (+ 5 5) (* 2 3))", Sexpr::Number(4.0), None);
+    }
+
+    #[test]
+    fn test_eval_primitives_arity_errors() {
+        let arity_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        // assert_eval_error("(-)", arity_error); // Handled by check_arity!
+        assert_eval_error("(/)", arity_error, None);
+        assert_eval_error("(=)", arity_error, None);
+        assert_eval_error("(= 1)", arity_error, None); // Assuming we enforce min 2 args for =
+    }
+
+    #[test]
+    fn test_eval_primitives_type_errors() {
+        let type_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        assert_eval_error("(+ 1 #t)", type_error, None);
+        assert_eval_error("(/ 1 \"hello\")", type_error, None);
+        assert_eval_error("(= 1 #f)", type_error, None); // Mismatched types in comparison
+    }
+
+    #[test]
+    fn test_eval_not_procedure_error() {
+        let not_proc_error = &EvalError::NotAProcedure(Sexpr::Number(0.0), Span::default()); // Dummy
+        assert_eval_error("(1 2 3)", not_proc_error, None); // Updated: was placeholder, now should work
+        let not_proc_error_list = &EvalError::NotAProcedure(Sexpr::List(vec![]), Span::default()); // Dummy
+        assert_eval_error("((list 1 2) 3)", not_proc_error_list, None); // Need list primitive first for this
     }
 }

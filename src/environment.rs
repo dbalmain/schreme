@@ -1,5 +1,6 @@
+use crate::Sexpr; // Values stored in the environment are Nodes
 use crate::source::Span;
-use crate::types::Node; // Values stored in the environment are Nodes
+use crate::types::{Node, PrimitiveFunc, Procedure};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -42,6 +43,21 @@ impl Environment {
             outer: None,
             bindings: HashMap::new(),
         }))
+    }
+    pub fn new_global_populated() -> Rc<RefCell<Environment>> {
+        let env_ptr = Environment::new(); // Create empty global env
+        {
+            // Borrow mutably only inside this scope
+            let mut env = env_ptr.borrow_mut();
+            // Add primitives
+            env.add_primitive("+", crate::evaluator::prim_add);
+            env.add_primitive("-", crate::evaluator::prim_sub);
+            env.add_primitive("*", crate::evaluator::prim_mul);
+            env.add_primitive("/", crate::evaluator::prim_div);
+            env.add_primitive("=", crate::evaluator::prim_equals);
+            // Add more here: <, >, cons, car, cdr, list, null?, etc.
+        }
+        env_ptr
     }
 
     /// Creates a new environment enclosed within an outer one.
@@ -107,6 +123,16 @@ impl Environment {
     }
     */
     // We will uncomment and refine `set` later when implementing the `set!` special form.
+
+    /// Helper to add a primitive procedure to the environment.
+    fn add_primitive(&mut self, name: &str, func: PrimitiveFunc) {
+        let node = Node {
+            kind: Sexpr::Procedure(Procedure::Primitive(func, name.to_string())),
+            // Use a default span for primitives, or a special marker span
+            span: Span::default(),
+        };
+        self.define(name.to_string(), node);
+    }
 }
 
 // --- Unit Tests ---
