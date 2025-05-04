@@ -52,8 +52,8 @@ This list outlines the planned development steps, subject to change as the proje
 * [ ] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
     * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
-    * [ ] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
-    * [ ] List operations (`cons`, `car`, `cdr`, `list`).
+    * [x] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
+    * [x] List operations (`cons`, `car`, `cdr`, `list`).
     * [ ] Equality (`eq?`, `eqv?`, `equal?`).
 * [ ] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
     * [ ] Read input line by line.

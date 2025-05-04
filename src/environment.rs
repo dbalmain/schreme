@@ -50,16 +50,30 @@ impl Environment {
             // Borrow mutably only inside this scope
             let mut env = env_ptr.borrow_mut();
             // Add primitives
-            env.add_primitive("+", crate::evaluator::prim_add);
-            env.add_primitive("-", crate::evaluator::prim_sub);
-            env.add_primitive("*", crate::evaluator::prim_mul);
-            env.add_primitive("/", crate::evaluator::prim_div);
-            env.add_primitive("=", crate::evaluator::prim_equals);
-            env.add_primitive("<", crate::evaluator::prim_less_than);
-            env.add_primitive("<=", crate::evaluator::prim_less_than_or_equals);
-            env.add_primitive(">", crate::evaluator::prim_greater_than);
-            env.add_primitive(">=", crate::evaluator::prim_greater_than_or_equals);
-            // Add more here: cons, car, cdr, list, null?, etc.
+            env.add_primitive("+", crate::primitives::prim_add);
+            env.add_primitive("-", crate::primitives::prim_sub);
+            env.add_primitive("*", crate::primitives::prim_mul);
+            env.add_primitive("/", crate::primitives::prim_div);
+            env.add_primitive("=", crate::primitives::prim_equals);
+            env.add_primitive("<", crate::primitives::prim_less_than);
+            env.add_primitive("<=", crate::primitives::prim_less_than_or_equals);
+            env.add_primitive(">", crate::primitives::prim_greater_than);
+            env.add_primitive(">=", crate::primitives::prim_greater_than_or_equals);
+
+            // --- ADD List Primitives ---
+            env.add_primitive("cons", crate::primitives::prim_cons);
+            env.add_primitive("car", crate::primitives::prim_car);
+            env.add_primitive("cdr", crate::primitives::prim_cdr);
+            env.add_primitive("list", crate::primitives::prim_list);
+
+            // --- ADD Type Predicates ---
+            env.add_primitive("null?", crate::primitives::prim_is_null);
+            env.add_primitive("pair?", crate::primitives::prim_is_pair); // Or list? depending on exact semantics chosen
+            env.add_primitive("number?", crate::primitives::prim_is_number);
+            env.add_primitive("boolean?", crate::primitives::prim_is_boolean);
+            env.add_primitive("symbol?", crate::primitives::prim_is_symbol);
+            env.add_primitive("string?", crate::primitives::prim_is_string);
+            env.add_primitive("procedure?", crate::primitives::prim_is_procedure);
         }
         env_ptr
     }

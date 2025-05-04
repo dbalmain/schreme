@@ -218,91 +218,8 @@ fn evaluate_if(operands: &[Node], env: Rc<RefCell<Environment>>, span: Span) -> 
     }
 }
 
-// Checks the number of arguments
-macro_rules! check_arity {
-    ($args:expr, $expected:expr, $span:expr, $name:expr) => {
-        if $args.len() != $expected {
-            return Err(EvalError::InvalidArguments(
-                format!(
-                    "Primitive '{}' expects exactly {} arguments, got {}",
-                    $name,
-                    $expected,
-                    $args.len()
-                ),
-                $span,
-            ));
-        }
-    };
-    // Variant for minimum number of args
-    ($args:expr, min $expected:expr, $span:expr, $name:expr) => {
-        if $args.len() < $expected {
-            return Err(EvalError::InvalidArguments(
-                format!(
-                    "Primitive '{}' expects at least {} arguments, got {}",
-                    $name,
-                    $expected,
-                    $args.len()
-                ),
-                $span,
-            ));
-        }
-    };
-    // Variant for range of args (inclusive)
-    ($args:expr, $min:expr, $max:expr, $span:expr, $name:expr) => {
-        if !($min..=$max).contains(&$args.len()) {
-            return Err(EvalError::InvalidArguments(
-                format!(
-                    "Primitive '{}' expects between {} and {} arguments, got {}",
-                    $name,
-                    $min,
-                    $max,
-                    $args.len()
-                ),
-                $span,
-            ));
-        }
-    };
-}
-
-// Extracts a number from a Node or returns WrongType error
-macro_rules! expect_number {
-    ($node:expr, $span:expr, $name:expr, $arg_pos:expr) => {
-        match $node.kind {
-            Sexpr::Number(n) => n,
-            _ => {
-                return Err(EvalError::InvalidArguments(
-                    // Or define a dedicated WrongType error
-                    format!(
-                        "Primitive '{}' expects a number for argument {}, got {}",
-                        $name,
-                        $arg_pos,
-                        $node.kind.type_name()
-                    ),
-                    $span, // Use call span for arg type errors
-                ));
-            }
-        }
-    };
-    // Variant without arg_pos specified
-    ($node:expr, $span:expr, $name:expr) => {
-        match $node.kind {
-            Sexpr::Number(n) => n,
-            _ => {
-                return Err(EvalError::InvalidArguments(
-                    format!(
-                        "Primitive '{}' expects number arguments, got {}",
-                        $name,
-                        $node.kind.type_name()
-                    ),
-                    $span,
-                ))
-            }
-        }
-    };
-}
-
 impl Sexpr {
-    fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &'static str {
         match self {
             Sexpr::Number(_) => "number",
             Sexpr::Symbol(_) => "symbol",
@@ -313,142 +230,6 @@ impl Sexpr {
             Sexpr::Procedure(_) => "procedure",
         }
     }
-}
-
-pub fn prim_fold_numbers<F: Fn(f64, f64) -> f64>(
-    args: Vec<Node>,
-    span: Span,
-    start: f64,
-    func: F,
-    operator: &str,
-) -> EvalResult {
-    let mut acc = start;
-    for (i, node) in args.iter().enumerate() {
-        let num = expect_number!(node, span, operator, i + 1);
-        acc = func(acc, num);
-    }
-    // Result needs to be a Node with a span. Let's use the call span.
-    Ok(Node {
-        kind: Sexpr::Number(acc),
-        span,
-    })
-}
-
-pub fn prim_add(args: Vec<Node>, span: Span) -> EvalResult {
-    // (+) -> 0
-    // (+ 1 2 3) -> 6
-    prim_fold_numbers(args, span, 0.0, |acc, val| acc + val, "+")
-}
-
-pub fn prim_sub(args: Vec<Node>, span: Span) -> EvalResult {
-    // (- x) -> -x
-    // (- x y z) -> x - y - z
-    check_arity!(args, min 1, span, "-");
-    let first_num = expect_number!(&args[0], span, "-", 1);
-
-    if args.len() == 1 {
-        Ok(Node {
-            kind: Sexpr::Number(-first_num),
-            span,
-        })
-    } else {
-        let mut result = first_num;
-        for (i, node) in args.iter().skip(1).enumerate() {
-            let num = expect_number!(node, span, "-", i + 2);
-            result -= num;
-        }
-        Ok(Node {
-            kind: Sexpr::Number(result),
-            span,
-        })
-    }
-}
-
-pub fn prim_mul(args: Vec<Node>, span: Span) -> EvalResult {
-    // (*) -> 1
-    // (* 1 2 3) -> 6
-    prim_fold_numbers(args, span, 1.0, |acc, val| acc * val, "*")
-}
-
-pub fn prim_div(args: Vec<Node>, span: Span) -> EvalResult {
-    // (/ x) -> 1/x
-    // (/ x y z) -> x / y / z
-    check_arity!(args, min 1, span, "/");
-    let first_num = expect_number!(&args[0], span, "/", 1);
-    if first_num == 0.0 && args.len() > 1 {
-        // Check potential division by zero if it's not the only arg
-        // Or let Rust panic/return Inf/NaN? Let's allow Inf/NaN for now.
-    }
-
-    if args.len() == 1 {
-        if first_num == 0.0 {
-            return Err(EvalError::InvalidArguments(
-                "Division by zero: (/ 0)".to_string(),
-                span,
-            ));
-        }
-        Ok(Node {
-            kind: Sexpr::Number(1.0 / first_num),
-            span,
-        })
-    } else {
-        let mut result = first_num;
-        for (i, node) in args.iter().skip(1).enumerate() {
-            let num = expect_number!(node, span, "/", i + 2);
-            if num == 0.0 {
-                return Err(EvalError::InvalidArguments(
-                    "Division by zero".to_string(),
-                    span,
-                ));
-            }
-            result /= num;
-        }
-        Ok(Node {
-            kind: Sexpr::Number(result),
-            span,
-        })
-    }
-}
-
-pub fn prim_all_numbers<F: Fn(f64, f64) -> bool>(
-    args: Vec<Node>,
-    span: Span,
-    compare: F,
-    operator: &str,
-) -> EvalResult {
-    // (= n1 n2 ...) -> boolean
-    check_arity!(args, min 2, span, operator);
-    let mut last_val = expect_number!(&args[0], span, operator, 1);
-    let mut result = true;
-    for (index, arg) in args.iter().enumerate().skip(1) {
-        let val = expect_number!(arg, span, "=", index + 1);
-        result = result && compare(last_val, val);
-        last_val = val;
-    }
-    Ok(Node {
-        kind: Sexpr::Boolean(result),
-        span,
-    })
-}
-
-pub fn prim_equals(args: Vec<Node>, span: Span) -> EvalResult {
-    prim_all_numbers(args, span, |left, right| left == right, "=")
-}
-
-pub fn prim_less_than(args: Vec<Node>, span: Span) -> EvalResult {
-    prim_all_numbers(args, span, |left, right| left < right, "<")
-}
-
-pub fn prim_less_than_or_equals(args: Vec<Node>, span: Span) -> EvalResult {
-    prim_all_numbers(args, span, |left, right| left <= right, "<=")
-}
-
-pub fn prim_greater_than(args: Vec<Node>, span: Span) -> EvalResult {
-    prim_all_numbers(args, span, |left, right| left > right, ">")
-}
-
-pub fn prim_greater_than_or_equals(args: Vec<Node>, span: Span) -> EvalResult {
-    prim_all_numbers(args, span, |left, right| left >= right, ">=")
 }
 
 // Add more primitives: cons, car, cdr, list, null?, pair?, etc.
@@ -733,5 +514,128 @@ mod tests {
         assert_eval_error("(1 2 3)", not_proc_error, None); // Updated: was placeholder, now should work
         let not_proc_error_list = &EvalError::NotAProcedure(Sexpr::List(vec![]), Span::default()); // Dummy
         assert_eval_error("((list 1 2) 3)", not_proc_error_list, None); // Need list primitive first for this
+    }
+
+    fn node(kind: Sexpr, start: usize, end: usize) -> Node {
+        Node {
+            kind,
+            span: Span::new(start, end),
+        }
+    }
+    #[test]
+
+    fn test_eval_list_primitives() {
+        // list
+        assert_eval_kind("(list)", Sexpr::Nil, None);
+        assert_eval_kind(
+            "(list 1 2 3)",
+            Sexpr::List(vec![
+                node(Sexpr::Number(1.0), 6, 7),
+                node(Sexpr::Number(2.0), 8, 9),
+                node(Sexpr::Number(3.0), 10, 11),
+            ]),
+            None,
+        );
+        assert_eval_kind(
+            "(list (+ 1 1) (- 5 2))",
+            Sexpr::List(vec![
+                node(Sexpr::Number(2.0), 6, 13),
+                node(Sexpr::Number(3.0), 14, 21),
+            ]),
+            None,
+        );
+
+        // cons
+        assert_eval_kind(
+            "(cons 1 '())",
+            Sexpr::List(vec![node(Sexpr::Number(1.0), 6, 7)]),
+            None,
+        );
+        assert_eval_kind(
+            "(cons 1 (list 2 3))",
+            Sexpr::List(vec![
+                node(Sexpr::Number(1.0), 6, 7),
+                node(Sexpr::Number(2.0), 14, 15),
+                node(Sexpr::Number(3.0), 16, 17),
+            ]),
+            None,
+        );
+        assert_eval_kind(
+            "(cons (list 1) (list 2))",
+            Sexpr::List(vec![
+                node(Sexpr::List(vec![node(Sexpr::Number(1.0), 12, 13)]), 6, 14),
+                node(Sexpr::Number(2.0), 21, 22),
+            ]),
+            None,
+        );
+
+        // car
+        assert_eval_kind("(car (list 1 2 3))", Sexpr::Number(1.0), None);
+        assert_eval_kind("(car (cons 'a '()))", Sexpr::Symbol("a".to_string()), None);
+
+        // cdr
+        assert_eval_kind(
+            "(cdr (list 1 2 3))",
+            Sexpr::List(vec![
+                node(Sexpr::Number(2.0), 13, 14),
+                node(Sexpr::Number(3.0), 15, 16),
+            ]),
+            None,
+        );
+        assert_eval_kind("(cdr (list 1))", Sexpr::Nil, None); // cdr of single-element list is Nil
+        assert_eval_kind(
+            "(cdr (cons 1 (cons 2 '())))",
+            Sexpr::List(vec![node(Sexpr::Number(2.0), 19, 20)]),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_eval_list_primitive_errors() {
+        let type_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        let arity_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+
+        // cons arity/type
+        assert_eval_error("(cons 1)", arity_error, None);
+        assert_eval_error("(cons 1 2 3)", arity_error, None);
+        assert_eval_error("(cons 1 2)", type_error, None); // 2nd arg must be list/nil
+
+        // car arity/type
+        assert_eval_error("(car)", arity_error, None);
+        assert_eval_error("(car 1 2)", arity_error, None);
+        assert_eval_error("(car '())", type_error, None); // Error on car of empty list
+        assert_eval_error("(car 5)", type_error, None); // Error on car of non-list
+
+        // cdr arity/type
+        assert_eval_error("(cdr)", arity_error, None);
+        assert_eval_error("(cdr 1 2)", arity_error, None);
+        assert_eval_error("(cdr '())", type_error, None); // Error on cdr of empty list
+        assert_eval_error("(cdr 5)", type_error, None); // Error on cdr of non-list
+    }
+
+    #[test]
+    fn test_eval_type_predicates() {
+        assert_eval_kind("(null? '())", Sexpr::Boolean(true), None);
+        assert_eval_kind("(null? (list))", Sexpr::Boolean(true), None);
+        assert_eval_kind("(null? (list 1))", Sexpr::Boolean(false), None);
+        assert_eval_kind("(null? 1)", Sexpr::Boolean(false), None);
+
+        assert_eval_kind("(pair? (cons 1 (list 2)))", Sexpr::Boolean(true), None); // Assuming cons returns list for now
+        assert_eval_kind("(pair? (list 1))", Sexpr::Boolean(true), None);
+        //assert_eval_kind("(pair? '(1 . 2))", Sexpr::Boolean(true), None); // Need dotted pair support first
+        assert_eval_kind("(pair? '())", Sexpr::Boolean(false), None);
+        assert_eval_kind("(pair? 1)", Sexpr::Boolean(false), None);
+
+        assert_eval_kind("(number? 1)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(number? #f)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(boolean? #t)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(boolean? 0)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(symbol? 'a)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(symbol? \"a\")", Sexpr::Boolean(false), None);
+        assert_eval_kind("(string? \"a\")", Sexpr::Boolean(true), None);
+        assert_eval_kind("(string? 'a)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(procedure? +)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(procedure? 1)", Sexpr::Boolean(false), None);
+        // Add tests for lambda later: (procedure? (lambda (x) x)) -> true
     }
 }
