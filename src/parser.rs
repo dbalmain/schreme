@@ -3,6 +3,7 @@ use crate::lexer::{LexerError, Token, TokenKind}; // Assuming Token is in lexer
 use crate::types::{Node, Sexpr};
 use std::fmt;
 use std::iter::Peekable;
+use std::rc::Rc;
 use std::vec::IntoIter; // To iterate over Vec<Token>
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,12 +87,28 @@ impl Parser {
     }
 
     /// Parses a single S-expression from the token stream.
-    pub fn parse_expr(&mut self) -> ParseResult<Node> {
-        match self.next_token() {
+    pub fn parse_expr_with_token(&mut self, token: Option<Token>) -> ParseResult<Node> {
+        match token {
             Some(Token {
                 kind: TokenKind::LParen,
                 span,
-            }) => self.parse_list(&span),
+            }) => {
+                match self.next_token() {
+                    Some(Token {
+                        kind: TokenKind::RParen,
+                        span: _rparen_span,
+                    }) => {
+                        // Empty list case
+                        self.next_token(); // Consume ')'
+                        return Ok(Node::new(Sexpr::Nil, span.merge(&span)));
+                    }
+                    Some(token) => {
+                        let car_node = self.parse_expr_with_token(Some(token))?;
+                        self.parse_list_recursive(&span, car_node)
+                    }
+                    _ => Err(ParseError::UnexpectedEof("')'".to_string())),
+                }
+            }
             Some(Token {
                 kind: TokenKind::Quote,
                 span,
@@ -101,10 +118,15 @@ impl Parser {
         }
     }
 
+    pub fn parse_expr(&mut self) -> ParseResult<Node> {
+        let token = self.next_token();
+        self.parse_expr_with_token(token)
+    }
+
     /// Parses an atomic expression (symbol, number, boolean, string).
     fn parse_atom(&mut self, token: Token) -> ParseResult<Node> {
-        Ok(Node {
-            kind: match token.kind {
+        Ok(Node::new(
+            match token.kind {
                 TokenKind::Symbol(s) => Sexpr::Symbol(s),
                 TokenKind::Number(n) => Sexpr::Number(n),
                 TokenKind::Boolean(b) => Sexpr::Boolean(b),
@@ -117,43 +139,60 @@ impl Parser {
                     expected: "an atom (symbol, number, boolean, string)".to_string(),
                 })?,
             },
-            span: token.span,
-        })
+            token.span,
+        ))
     }
 
     /// Parses a list expression `(...)`.
-    fn parse_list(&mut self, left_span: &Span) -> ParseResult<Node> {
-        let mut elements: Vec<Node> = Vec::new();
+    fn parse_list_recursive(&mut self, start_span: &Span, car_node: Node) -> ParseResult<Node> {
+        match self.next_token() {
+            Some(Token {
+                kind: TokenKind::Dot,
+                span: _dot_span,
+            }) => {
+                let cdr_node = self.parse_expr()?;
 
-        // Loop until we find the closing parenthesis ')'
-        loop {
-            match self.peek_token() {
-                Some(Token {
-                    kind: TokenKind::RParen,
-                    span: right_span,
-                }) => {
-                    // Found the closing parenthesis
-                    let span = left_span.merge(right_span);
-                    self.next_token(); // Consume ')'
-                    return Ok(Node {
-                        span,
-                        // Handle empty list '()' -> Sexpr::Nil
-                        kind: if elements.is_empty() {
-                            Sexpr::Nil
-                        } else {
-                            Sexpr::List(elements)
-                        },
-                    });
+                match self.next_token() {
+                    Some(Token {
+                        kind: TokenKind::RParen,
+                        span: rparen_span,
+                    }) => {
+                        let final_span = start_span.merge(&rparen_span);
+                        Ok(Node::new(
+                            // Wrap nodes in Rc
+                            Sexpr::Pair(car_node, cdr_node),
+                            final_span,
+                        ))
+                    }
+                    // ... (error handling) ...
+                    Some(t) => Err(ParseError::UnexpectedToken {
+                        found: t,
+                        expected: "')' after dotted pair".to_string(),
+                    }),
+                    None => Err(ParseError::UnexpectedEof(
+                        "')' after dotted pair".to_string(),
+                    )),
                 }
-                Some(_) => {
-                    // Parse the next element inside the list
-                    let expr = self.parse_expr()?; // Recursive call
-                    elements.push(expr);
-                }
-                None => {
-                    // Reached EOF before finding ')'
-                    return Err(ParseError::UnexpectedEof("')'".to_string()));
-                }
+            }
+            Some(Token {
+                kind: TokenKind::RParen,
+                span: rparen_span,
+            }) => {
+                // Consume ')'
+                let final_span = start_span.merge(&rparen_span);
+                // Use a shared Nil node if desired, or create new one
+                let nil_node = Node::new(Sexpr::Nil, rparen_span);
+                Ok(Node::new(Sexpr::Pair(car_node, nil_node), final_span))
+            }
+            Some(token) => {
+                let next_car_node = self.parse_expr_with_token(Some(token))?;
+                let cdr_node = self.parse_list_recursive(start_span, next_car_node)?;
+                let final_span = start_span.merge(&cdr_node.span); // Calculate span covering whole list
+                Ok(Node::new(Sexpr::Pair(car_node, cdr_node), final_span))
+            }
+            None => {
+                // Reached EOF before finding ')'
+                Err(ParseError::UnexpectedEof("')'".to_string()))
             }
         }
     }
@@ -165,16 +204,13 @@ impl Parser {
         let span = quote_span.merge(&quoted_expr.span);
 
         // Construct the equivalent (quote expr) S-expression
-        Ok(Node {
-            kind: Sexpr::List(vec![
-                Node {
-                    kind: Sexpr::Symbol("quote".to_string()),
-                    span: quote_span,
-                },
+        Ok(Node::new(
+            Sexpr::Pair(
+                Node::new(Sexpr::Symbol("quote".to_string()), quote_span),
                 quoted_expr,
-            ]),
+            ),
             span,
-        })
+        ))
     }
 
     /// Parses the entire sequence of tokens, expecting potentially multiple top-level expressions.
@@ -258,6 +294,16 @@ mod tests {
         Node::new(sexpr, Span::new(start, end))
     }
 
+    fn list(nodes: &[Node], start: usize, end: usize) -> Node {
+        match nodes {
+            [] => Node::new(Sexpr::Nil, Span::new(start, end)),
+            [first, rest @ ..] => Node::new(
+                Sexpr::Pair(first.clone(), list(rest, start, end)),
+                Span::new(start, end),
+            ),
+        }
+    }
+
     fn unexpected_token(kind: TokenKind, start: usize, end: usize, expected: String) -> ParseError {
         ParseError::UnexpectedToken {
             found: Token {
@@ -296,36 +342,36 @@ mod tests {
     fn test_parse_simple_list() {
         assert_parse(
             "(1 2 3)",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Number(1.0), 1, 2),
                     node(Sexpr::Number(2.0), 3, 4),
                     node(Sexpr::Number(3.0), 5, 6),
-                ]),
+                ],
                 0,
                 7,
             ),
         );
         assert_parse(
             "(+ 10 20)",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("+".to_string()), 1, 2),
                     node(Sexpr::Number(10.0), 3, 5),
                     node(Sexpr::Number(20.0), 6, 8),
-                ]),
+                ],
                 0,
                 9,
             ),
         );
         assert_parse(
             "(list #t \"hello\")",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("list".to_string()), 1, 5),
                     node(Sexpr::Boolean(true), 6, 8),
                     node(Sexpr::String("hello".to_string()), 9, 16),
-                ]),
+                ],
                 0,
                 17,
             ),
@@ -336,30 +382,26 @@ mod tests {
     fn test_parse_nested_list() {
         assert_parse(
             "(a (b c) d)",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("a".to_string()), 1, 2),
-                    node(
-                        Sexpr::List(vec![
+                    list(
+                        &[
                             node(Sexpr::Symbol("b".to_string()), 4, 5),
                             node(Sexpr::Symbol("c".to_string()), 6, 7),
-                        ]),
+                        ],
                         3,
                         8,
                     ),
                     node(Sexpr::Symbol("d".to_string()), 9, 10),
-                ]),
+                ],
                 0,
                 11,
             ),
         );
         assert_parse(
             "(()())",
-            node(
-                Sexpr::List(vec![node(Sexpr::Nil, 1, 3), node(Sexpr::Nil, 3, 5)]),
-                0,
-                6,
-            ),
+            list(&[node(Sexpr::Nil, 1, 3), node(Sexpr::Nil, 3, 5)], 0, 6),
         );
     }
 
@@ -367,77 +409,77 @@ mod tests {
     fn test_parse_quote_sugar() {
         assert_parse(
             "'a",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("quote".to_string()), 0, 1),
                     node(Sexpr::Symbol("a".to_string()), 1, 2),
-                ]),
+                ],
                 0,
                 2,
             ),
         );
         assert_parse(
             "'123",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("quote".to_string()), 0, 1),
                     node(Sexpr::Number(123.0), 1, 4),
-                ]),
+                ],
                 0,
                 4,
             ),
         );
         assert_parse(
             "'()",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("quote".to_string()), 0, 1),
                     node(Sexpr::Nil, 1, 3),
-                ]),
+                ],
                 0,
                 3,
             ),
         );
         assert_parse(
             "'(1 2)",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("quote".to_string()), 0, 1),
-                    node(
-                        Sexpr::List(vec![
+                    list(
+                        &[
                             node(Sexpr::Number(1.0), 2, 3),
                             node(Sexpr::Number(2.0), 4, 5),
-                        ]),
+                        ],
                         1,
                         6,
                     ),
-                ]),
+                ],
                 0,
                 6,
             ),
         );
         assert_parse(
             "(list 'a 'b)",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("list".to_string()), 1, 5),
-                    node(
-                        Sexpr::List(vec![
+                    list(
+                        &[
                             node(Sexpr::Symbol("quote".to_string()), 6, 7),
                             node(Sexpr::Symbol("a".to_string()), 7, 8),
-                        ]),
+                        ],
                         6,
                         8,
                     ),
-                    node(
-                        Sexpr::List(vec![
+                    list(
+                        &[
                             node(Sexpr::Symbol("quote".to_string()), 9, 10),
                             node(Sexpr::Symbol("b".to_string()), 10, 11),
-                        ]),
+                        ],
                         9,
                         11,
                     ),
-                ]),
+                ],
                 0,
                 12,
             ),
@@ -496,23 +538,23 @@ mod tests {
         // Parser operates on tokens; whitespace/comments are handled by lexer
         assert_parse(
             " ( + 1 2 ) ; comment",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("+".to_string()), 3, 4),
                     node(Sexpr::Number(1.0), 5, 6),
                     node(Sexpr::Number(2.0), 7, 8),
-                ]),
+                ],
                 1,
                 10,
             ),
         );
         assert_parse(
             " ; comment at start\n   'symbol   ; comment at end\n ",
-            node(
-                Sexpr::List(vec![
+            list(
+                &[
                     node(Sexpr::Symbol("quote".to_string()), 23, 24),
                     node(Sexpr::Symbol("symbol".to_string()), 24, 30),
-                ]),
+                ],
                 23,
                 30,
             ),

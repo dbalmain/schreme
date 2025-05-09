@@ -1,7 +1,7 @@
 use crate::environment::{EnvError, Environment};
 use crate::source::Span;
 use crate::types::{Node, Procedure, Sexpr};
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
@@ -72,14 +72,14 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
     // let current_env = env;
     // loop { ... }
 
-    match &node.kind {
+    match &*node.kind.borrow() {
         // 1. Self-evaluating atoms: Numbers, Strings, Booleans, Nil
         Sexpr::Number(_)
         | Sexpr::String(_)
         | Sexpr::Boolean(_)
         | Sexpr::Nil
         | Sexpr::Procedure(_) => {
-            Ok(node) // Return the node itself (or a clone if ownership is an issue)
+            Ok(node.clone()) // Return the node itself (or a clone if ownership is an issue)
         }
 
         // 2. Symbols: Look up in the environment
@@ -89,67 +89,243 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
         }
 
         // 3. Lists: Could be special forms or procedure calls
-        Sexpr::List(elements) => {
+        Sexpr::Pair(first, rest) => {
             // Check the first element to see if it's a special form or procedure call
-            if let [first, rest @ ..] = &elements[..] {
-                match &first.kind {
-                    // 3a. Special Form: 'quote'
-                    Sexpr::Symbol(sym_name) if sym_name == "quote" => {
-                        evaluate_quote(rest, node.span) // Pass span of the whole (quote ...) form
-                    }
+            match &*first.kind.borrow() {
+                // 3a. Special Form: 'quote'
+                Sexpr::Symbol(sym_name) if sym_name == "quote" => Ok(rest.clone()),
 
-                    // 3b. Special Form: 'if' (Implement next)
-                    Sexpr::Symbol(sym_name) if sym_name == "if" => {
-                        evaluate_if(rest, env, node.span) // Pass env and whole form's span
-                    }
-
-                    // 3c. Special Form: 'define' (Implement later)
-                    // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
-
-                    // 3d. Special Form: 'set!' (Implement later)
-                    // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
-
-                    // 3e. Special Form: 'lambda' (Implement later)
-                    // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
-
-                    // 3f. Procedure Call (Implement later)
-                    _ => evaluate_procedure(first, rest, env, node.span),
+                // 3b. Special Form: 'if' (Implement next)
+                Sexpr::Symbol(sym_name) if sym_name == "if" => {
+                    evaluate_if(rest, env, node.span) // Pass env and whole form's span
                 }
-            } else {
-                Err(EvalError::UnexpectedError(
-                    node.kind,
-                    node.span,
-                    "Empty list should have been parsed as Nil".to_string(),
-                )) // Placeholder error
+
+                // 3c. Special Form: 'define' (Implement later)
+                // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
+
+                // 3d. Special Form: 'set!' (Implement later)
+                // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
+
+                // 3e. Special Form: 'lambda' (Implement later)
+                // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
+
+                // 3f. Procedure Call (Implement later)
+                _ => evaluate_procedure(first, rest, env, node.span),
             }
         } // Handle other Sexpr kinds if they exist (e.g., Pair, Vector) later
     }
 }
 
+fn invalid_special_form(error: &str, span: Span) -> EvalResult {
+    Err(EvalError::InvalidSpecialForm(error.to_string(), span))
+}
+
+/// Evaluates the 'if' special form.
+/// `if_operands_node` is the Node whose kind is Pair(condition, Pair(consequent, Pair(alternate, Nil)))
+/// or Pair(condition, Pair(consequent, Nil)).
+/// `env` is the current environment.
+/// `original_if_span` is the span of the entire (if ...) expression.
+fn evaluate_if(
+    operands: &Node,
+    env: Rc<RefCell<Environment>>,
+    original_if_span: Span,
+) -> EvalResult {
+    // The operands are structured as a list (nested pairs)
+    // (if condition consequent alternate?)
+    // This means if_operands_node should be Pair(condition, rest_of_args_list)
+
+    // 1. Extract the condition
+    let (condition, consequent_and_maybe_alternate) = match operands.kind.borrow().clone() {
+        // Clone the Sexpr to avoid holding borrow
+        Sexpr::Pair(cond_node, rest_args_node) => (cond_node, rest_args_node),
+        Sexpr::Nil => {
+            return invalid_special_form("if: Missing condition and consequent", original_if_span);
+        }
+        _ => {
+            // Should not happen if parser creates proper list structure for operands
+            return invalid_special_form("if: Missing consequent", original_if_span);
+        }
+    };
+
+    // 2. Evaluate the condition
+    let condition_result = evaluate(condition.clone(), env.clone())?;
+
+    // Determine truthiness
+    let is_truthy = match &*condition_result.kind.borrow() {
+        // Borrow to check the kind
+        Sexpr::Boolean(false) => false,
+        _ => true,
+    };
+
+    if is_truthy {
+        // 3a. Condition is true: extract and evaluate the consequent
+        match consequent_and_maybe_alternate.kind.borrow().clone() {
+            // Clone Sexpr
+            Sexpr::Pair(consequent_node, _) => {
+                // We only care about the consequent here
+                evaluate(consequent_node.clone(), env)
+            }
+            Sexpr::Nil => {
+                // (if #t) - missing consequent
+                Err(EvalError::InvalidSpecialForm(
+                    "if: Missing consequent branch".to_string(),
+                    original_if_span,
+                ))
+            }
+            _ => Err(EvalError::InvalidSpecialForm(
+                // Should be Pair or Nil
+                "if: Invalid structure for consequent branch".to_string(),
+                consequent_and_maybe_alternate.span,
+            )),
+        }
+    } else {
+        // 3b. Condition is false: extract and evaluate the alternate, or return Nil
+        match consequent_and_maybe_alternate.kind.borrow().clone() {
+            // Clone Sexpr
+            Sexpr::Pair(_, alternate_branch_node) => {
+                // Skip consequent, look at its cdr
+                match alternate_branch_node.kind.borrow().clone() {
+                    // Clone Sexpr
+                    Sexpr::Pair(actual_alternate_node, term_node) => {
+                        // Ensure the list of operands for if ends correctly: (if c t e) -> (c . (t . (e . ())))
+                        // term_node should be Nil
+                        if !matches!(*term_node.kind.borrow(), Sexpr::Nil) {
+                            return Err(EvalError::InvalidSpecialForm(
+                                "if: Too many arguments, alternate branch not properly terminated"
+                                    .to_string(),
+                                term_node.span,
+                            ));
+                        }
+                        evaluate(actual_alternate_node.clone(), env)
+                    }
+                    Sexpr::Nil => {
+                        // This is the case for (if #f consequent) - no alternate provided
+                        Ok(Node {
+                            kind: Rc::new(RefCell::new(Sexpr::Nil)),
+                            span: original_if_span, // Span for the default return
+                        })
+                    }
+                    _ => Err(EvalError::InvalidSpecialForm(
+                        // Should be Pair or Nil
+                        "if: Invalid structure for alternate branch".to_string(),
+                        alternate_branch_node.span,
+                    )),
+                }
+            }
+            Sexpr::Nil => {
+                // (if #f) - missing consequent and alternate
+                Err(EvalError::InvalidSpecialForm(
+                    "if: Missing consequent branch (condition was false)".to_string(),
+                    original_if_span,
+                ))
+            }
+            _ => Err(EvalError::InvalidSpecialForm(
+                // Should be Pair or Nil
+                "if: Invalid structure for branches".to_string(),
+                consequent_and_maybe_alternate.span,
+            )),
+        }
+    }
+}
+
 fn evaluate_procedure(
+    operator_node_from_ast: Node, // The Node from the AST that represents the operator
+    operands_list_node: Node, // The Node from the AST representing the list of operands, e.g. kind is Pair(arg1, Pair(arg2, Nil))
+    env: Rc<RefCell<Environment>>,
+    original_call_span: Span, // Span of the entire procedure call expression, e.g., ((+ 1) 2)
+) -> EvalResult {
+    // 1. Evaluate the operator expression to get a procedure value
+    let evaluated_operator_node = evaluate(operator_node_from_ast.clone(), env.clone())?; // env.clone() is cheap (Rc)
+
+    // 2. Check if the result of evaluating the operator is actually a procedure
+    //    We need to borrow the Sexpr from the Rc<RefCell<Sexpr>>
+    let procedure_value = match &*evaluated_operator_node.kind.borrow() {
+        Sexpr::Procedure(proc_enum_val) => proc_enum_val.clone(), // Clone the Procedure enum (Primitive or Lambda)
+        _ => {
+            return Err(EvalError::NotAProcedure(
+                evaluated_operator_node.kind.borrow().clone(), // The Sexpr that was found
+                operator_node_from_ast.span, // Span of the original operator expression from AST
+            ));
+        }
+    };
+
+    // 3. Evaluate the operands (which are in a list structure)
+    let mut evaluated_args: Vec<Node> = Vec::new();
+    let mut current_operand_list_node: Node = operands_list_node; // Start with the AST node for the whole operand list
+
+    loop {
+        // Borrow the Sexpr from the current node in the operand list structure
+        let kind_of_current_operand_list: Ref<Sexpr> = current_operand_list_node.kind.borrow();
+
+        match &*kind_of_current_operand_list {
+            Sexpr::Nil => {
+                // End of the operand list
+                break;
+            }
+            Sexpr::Pair(actual_operand_node, next_operand_list_node) => {
+                // Evaluate the current actual_operand_node
+                let evaluated_arg = evaluate(actual_operand_node.clone(), env.clone())?;
+                evaluated_args.push(evaluated_arg);
+
+                // Move to the next part of the operand list for the next iteration
+                let temp_next_list_node = next_operand_list_node.clone();
+                drop(kind_of_current_operand_list); // Release borrow before reassigning loop variable
+                current_operand_list_node = temp_next_list_node;
+            }
+            _ => {
+                // This case means the operand list wasn't a proper list structure
+                // (e.g., ended with a non-nil atom in a dotted pair like ((foo 1 . 2)))
+                // This is typically a syntax error caught by the parser, but good to handle defensively.
+                // Or, if your language allows applying functions to improper lists, this might be valid
+                // but usually function application expects a proper list of arguments.
+                return Err(EvalError::InvalidSpecialForm(
+                    // Or a more specific "Invalid argument list structure"
+                    "Procedure call operands did not form a proper list.".to_string(),
+                    current_operand_list_node.span, // Span of the problematic part of the arg list
+                ));
+            }
+        }
+    }
+
+    // 4. Apply the procedure
+    match procedure_value {
+        Procedure::Primitive(func, _) => {
+            // Call the Rust function with evaluated args and the original call's span
+            func(evaluated_args, original_call_span)
+        } // Procedure::Lambda(lambda_data) => {
+          //     // - Create a new environment enclosing the lambda's captured env
+          //     // - Bind lambda parameters to evaluated_args in the new env
+          //     // - Evaluate the lambda body in the new env
+          //     // - Handle TCO here eventually
+          //     unimplemented!("Lambda evaluation not yet implemented");
+          // }
+    }
+}
+fn old_evaluate_procedure(
     operator: &Node,
-    operands: &[Node],
+    operands: &Node,
     env: Rc<RefCell<Environment>>,
     span: Span,
 ) -> EvalResult {
     let operator_result_node = evaluate(operator.clone(), env.clone()).map_err(|_err| {
         EvalError::NotAProcedure(
-            operator.clone().kind, // What was actually found
-            operator.span,         // Span of the operator expression
+            operator.kind.borrow().clone(), // What was actually found
+            operator.span,                  // Span of the operator expression
         )
     })?;
 
-    // 2. Check if the result is a procedure
-    let procedure = match operator_result_node.kind {
+    let operator_sexpr = &*operator_result_node.kind.borrow();
+    let procedure = match operator_sexpr {
         Sexpr::Procedure(proc) => proc, // Extract the Procedure enum
         _ => {
             return Err(EvalError::NotAProcedure(
-                operator_result_node.kind, // What was actually found
-                operator.span,             // Span of the operator expression
+                operator_sexpr.clone(), // What was actually found
+                operator.span,          // Span of the operator expression
             ));
         }
     };
 
+    // From here on, we need to get this working
     // 3. Evaluate the operands
     let mut evaluated_args: Vec<Node> = Vec::with_capacity(operands.len());
     for operand_node in operands {
@@ -172,52 +348,6 @@ fn evaluate_procedure(
     }
 }
 
-fn evaluate_quote(operands: &[Node], span: Span) -> EvalResult {
-    if let [node] = operands {
-        // The operand is already a Node, just return it (or a clone).
-        // Quote returns the operand unevaluated.
-        Ok(node.clone())
-    } else {
-        Err(EvalError::InvalidSpecialForm(
-            "quote expects exactly one argument".to_string(),
-            span, // Use the span of the whole (quote ...) form
-        ))
-    }
-}
-
-fn evaluate_if(operands: &[Node], env: Rc<RefCell<Environment>>, span: Span) -> EvalResult {
-    if let [condition, consequent, maybe_alternate @ ..] = operands
-        && maybe_alternate.len() <= 1
-    {
-        // Evaluate the condition first
-        let condition_result = evaluate(condition.clone(), env.clone())?;
-
-        // Determine truthiness: In Scheme, only #f is false, everything else is true.
-        let is_truthy = match condition_result.kind {
-            Sexpr::Boolean(false) => false,
-            _ => true, // All other values (#t, numbers, strings, lists, symbols, etc.) are true
-        };
-
-        if is_truthy {
-            evaluate(consequent.clone(), env) // Return result of consequent evaluation
-        } else {
-            if let [alternate] = maybe_alternate {
-                evaluate(alternate.clone(), env) // Return result of alternate evaluation
-            } else {
-                Ok(Node {
-                    kind: Sexpr::Nil,
-                    span,
-                })
-            }
-        }
-    } else {
-        Err(EvalError::InvalidSpecialForm(
-            "if expects condition, consequent, and optional alternate".to_string(),
-            span, // Span of the whole (if ...) form
-        ))
-    }
-}
-
 impl Sexpr {
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -225,7 +355,7 @@ impl Sexpr {
             Sexpr::Symbol(_) => "symbol",
             Sexpr::Boolean(_) => "boolean",
             Sexpr::String(_) => "string",
-            Sexpr::List(_) => "list",
+            Sexpr::Pair(_, _) => "pair",
             Sexpr::Nil => "nil",
             Sexpr::Procedure(_) => "procedure",
         }
@@ -330,8 +460,7 @@ mod tests {
         match parse_str("'(1 2)") {
             Ok(node) => match evaluate(node, env) {
                 Ok(result_node) => {
-                    assert!(matches!(result_node.kind, Sexpr::List(_)));
-                    if let Sexpr::List(elements) = result_node.kind {
+                    if let Sexpr::Pair(elements) = result_node.kind {
                         assert_eq!(elements.len(), 2);
                         assert!(matches!(elements[0].kind, Sexpr::Number(n) if n == 1.0));
                         assert!(matches!(elements[1].kind, Sexpr::Number(n) if n == 2.0));
@@ -508,22 +637,29 @@ mod tests {
         assert_eval_error("(= 1 #f)", type_error, None); // Mismatched types in comparison
     }
 
+    fn list(nodes: &[Node], start: usize, end: usize) -> Node {
+        match nodes {
+            [] => Node::new(Sexpr::Nil, Span::new(start, end)),
+            [first, rest @ ..] => Node::new(
+                Sexpr::Pair(Rc::new(first.clone()), Rc::new(list(rest, start, end))),
+                Span::new(start, end),
+            ),
+        }
+    }
+
     #[test]
     fn test_eval_not_procedure_error() {
         let not_proc_error = &EvalError::NotAProcedure(Sexpr::Number(0.0), Span::default()); // Dummy
         assert_eval_error("(1 2 3)", not_proc_error, None); // Updated: was placeholder, now should work
-        let not_proc_error_list = &EvalError::NotAProcedure(Sexpr::List(vec![]), Span::default()); // Dummy
+        let not_proc_error_list = &EvalError::NotAProcedure(Sexpr::Nil, Span::default()); // Dummy
         assert_eval_error("((list 1 2) 3)", not_proc_error_list, None); // Need list primitive first for this
     }
 
     fn node(kind: Sexpr, start: usize, end: usize) -> Node {
-        Node {
-            kind,
-            span: Span::new(start, end),
-        }
+        Node::new(kind, Span::new(start, end))
     }
-    #[test]
 
+    #[test]
     fn test_eval_list_primitives() {
         // list
         assert_eval_kind("(list)", Sexpr::Nil, None);

@@ -1,22 +1,29 @@
 use crate::{evaluator::EvalResult, source::Span};
-use std::fmt; // For custom display formatting
+use std::{
+    cell::{Ref, RefCell},
+    fmt,
+    rc::Rc,
+}; // For custom display formatting
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    pub kind: Sexpr, // The actual S-expression data
-    pub span: Span,  // The source span it covers
+    pub kind: Rc<RefCell<Sexpr>>, // The actual S-expression data
+    pub span: Span,               // The source span it covers
 }
 
 impl Node {
     pub fn new(kind: Sexpr, span: Span) -> Self {
-        Node { kind, span }
+        Node {
+            kind: Rc::new(RefCell::new(kind)),
+            span,
+        }
     }
 }
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Delegate to Sexpr's Display implementation
-        write!(f, "{}", self.kind)
+        write!(f, "{}", self.kind.borrow())
         // Or potentially include span info in debug formats, but not default Display
     }
 }
@@ -25,12 +32,12 @@ impl fmt::Display for Node {
 /// This enum will be the core data structure for both code (AST) and data.
 #[derive(Debug, Clone, PartialEq)] // Add traits for easy debugging, copying, and comparison
 pub enum Sexpr {
-    Symbol(String),  // e.g., +, variable-name, quote
-    Number(f64),     // Using f64 for simplicity for now
-    Boolean(bool),   // #t or #f
-    String(String),  // For string literals "hello\n"
-    List(Vec<Node>), // e.g., (+ 1 2), (define x 10)
-    Nil,             // Represents the empty list '()
+    Symbol(String),   // e.g., +, variable-name, quote
+    Number(f64),      // Using f64 for simplicity for now
+    Boolean(bool),    // #t or #f
+    String(String),   // For string literals "hello\n"
+    Pair(Node, Node), // e.g., (+ 1 2), (define x 10)
+    Nil,              // Represents the empty list '()
     Procedure(Procedure),
     // --- Future additions ---
     // Pair(Box<Sexpr>, Box<Sexpr>), // For dotted pairs, alternative list rep
@@ -45,15 +52,43 @@ impl fmt::Display for Sexpr {
             Sexpr::Symbol(s) => write!(f, "{}", s),
             Sexpr::Number(n) => write!(f, "{}", n),
             Sexpr::Boolean(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
-            Sexpr::List(list) => {
-                let mut first = true;
-                for expr in list {
-                    if !first {
-                        write!(f, " ")?;
+            Sexpr::Pair(head, tail) => {
+                write!(f, "({}", head)?;
+
+                // Start iterating with the first tail Node
+                let mut current_tail_for_loop: Node = tail.clone();
+
+                loop {
+                    // Borrow the Sexpr kind from the current_tail_for_loop's Rc<RefCell<Sexpr>>
+                    let kind_of_current_tail: Ref<Sexpr> = current_tail_for_loop.kind.borrow();
+
+                    match &*kind_of_current_tail {
+                        Sexpr::Pair(elem_of_pair, next_tail_node) => {
+                            write!(f, " {}", elem_of_pair)?;
+                            // Update current_tail_for_loop for the next iteration by cloning the next Node.
+                            // The borrow `kind_of_current_tail` is *not* on `next_tail_node` yet.
+                            // And `current_tail_for_loop` is separate from `next_tail_node` until assignment.
+                            let temp_next_tail = next_tail_node.clone();
+                            // Explicitly drop the borrow before reassigning to the loop variable
+                            // that was involved in the borrow.
+                            drop(kind_of_current_tail);
+                            current_tail_for_loop = temp_next_tail;
+                        }
+                        Sexpr::Nil => {
+                            // End of a proper list
+                            break;
+                        }
+                        _ => {
+                            // Dotted list: the cdr is not a Pair and not Nil.
+                            // `current_tail_for_loop` is the Node containing this final Sexpr.
+                            write!(f, " . {}", current_tail_for_loop)?;
+                            break;
+                        }
                     }
-                    write!(f, "{}", expr)?;
-                    first = false;
+                    // If we didn't break, kind_of_current_tail (the Ref guard) is dropped here naturally
+                    // before the next loop iteration starts.
                 }
+
                 write!(f, ")")
             }
             Sexpr::Nil => write!(f, "()"),
@@ -80,7 +115,7 @@ impl fmt::Display for Sexpr {
     }
 }
 
-pub type PrimitiveFunc = fn(Vec<Node>, Span) -> EvalResult;
+pub type PrimitiveFunc = fn(Node, Span) -> EvalResult;
 
 #[derive(Clone)] // Need Clone for Sexpr::Procedure
 pub enum Procedure {

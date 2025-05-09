@@ -278,6 +278,18 @@ mod tests {
             "(.)",
             vec![TokenKind::LParen, TokenKind::Dot, TokenKind::RParen],
         );
+        assert_tokens(
+            " a . b ",
+            vec![
+                TokenKind::Symbol("a".to_string()),
+                TokenKind::Dot,
+                TokenKind::Symbol("b".to_string()),
+            ],
+        );
+        // Ensure dot within symbols/numbers still works
+        assert_tokens("1.2", vec![TokenKind::Number(1.2)]);
+        assert_tokens(".5", vec![TokenKind::Number(0.5)]);
+        assert_tokens("sym.bol", vec![TokenKind::Symbol("sym.bol".to_string())]);
     }
 
     #[test]
