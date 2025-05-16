@@ -15,10 +15,11 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Setup `lib.rs` for library structure.
 * [ ] **Core Data Types (`types.rs`):** Define `Sexpr` enum (Symbol, Number, Boolean, List, Nil).
     * [x] Implement `Display` for pretty-printing `Sexpr`.
-    * [ ] Add `Pair`/`Cons` cell representation (alternative/complement to `Vec<Sexpr>` for lists).
+    * [x] Add `Pair`/`Cons` cell representation (alternative/complement to `Vec<Sexpr>` for lists).
     * [x] Add `String` type.
     * [ ] Add `Vector` type (`#( ... )`).
     * [ ] Add `Character` type (`#\a`).
+    * [ ] Add `HashMap` type
 * [x] **Lexer (`lexer.rs`):** Convert input string to `Token` stream.
     * [x] Handle basic tokens: `(`, `)`, `'`, symbols, numbers (float), booleans (`#t`, `#f`).
     * [x] Handle string literals (`"`).

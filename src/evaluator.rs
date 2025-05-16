@@ -578,9 +578,9 @@ mod tests {
             "(list 1 2 3)",
             node_list(
                 &[
-                    node(Sexpr::Number(1.0), 6, 7),
-                    node(Sexpr::Number(2.0), 8, 9),
-                    node(Sexpr::Number(3.0), 10, 11),
+                    node_number(1.0, 6, 7),
+                    node_number(2.0, 8, 9),
+                    node_number(3.0, 10, 11),
                 ],
                 6,
                 12,
@@ -589,14 +589,7 @@ mod tests {
         );
         assert_eval_node(
             "(list (+ 1 1) (- 5 2))",
-            node_list(
-                &[
-                    node(Sexpr::Number(2.0), 6, 13),
-                    node(Sexpr::Number(3.0), 14, 21),
-                ],
-                6,
-                22,
-            ),
+            node_list(&[node_number(2.0, 6, 13), node_number(3.0, 14, 21)], 6, 22),
             None,
         );
 
@@ -609,12 +602,9 @@ mod tests {
         assert_eval_node(
             "(cons 1 (list 2 3))",
             node_pair(
-                node(Sexpr::Number(1.0), 6, 7),
+                node_number(1.0, 6, 7),
                 node_list(
-                    &[
-                        node(Sexpr::Number(2.0), 14, 15),
-                        node(Sexpr::Number(3.0), 16, 17),
-                    ],
+                    &[node_number(2.0, 14, 15), node_number(3.0, 16, 17)],
                     14,
                     18,
                 ),
@@ -626,8 +616,8 @@ mod tests {
         assert_eval_node(
             "(cons (list 1) (list 2))",
             node_pair(
-                node_list(&[node(Sexpr::Number(1.0), 12, 13)], 12, 14),
-                node_list(&[node(Sexpr::Number(2.0), 21, 22)], 21, 23),
+                node_list(&[node_number(1.0, 12, 13)], 12, 14),
+                node_list(&[node_number(2.0, 21, 22)], 21, 23),
                 0,
                 24,
             ),
@@ -647,10 +637,7 @@ mod tests {
         assert_eval_node(
             "(cdr (list 1 2 3))",
             node_list(
-                &[
-                    node(Sexpr::Number(2.0), 13, 14),
-                    node(Sexpr::Number(3.0), 15, 16),
-                ],
+                &[node_number(2.0, 13, 14), node_number(3.0, 15, 16)],
                 13,
                 17,
             ),
