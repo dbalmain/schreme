@@ -1,9 +1,5 @@
-use crate::{evaluator::EvalResult, source::Span};
-use std::{
-    cell::{Ref, RefCell},
-    fmt,
-    rc::Rc,
-}; // For custom display formatting
+use crate::{Environment, evaluate, evaluator::EvalResult, source::Span};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
@@ -17,6 +13,85 @@ impl Node {
             kind: Rc::new(RefCell::new(kind)),
             span,
         }
+    }
+
+    /// Helper to create a Nil node with a given span.
+    pub fn new_nil(span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Nil)),
+            span,
+        }
+    }
+
+    /// Helper to create a Pair node. The span for the new Pair node itself
+    /// will be synthetic or based on one of its elements.
+    pub fn new_pair(car: Node, cdr: Node, pair_span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Pair(car, cdr))),
+            span: pair_span,
+        }
+    }
+
+    pub fn new_bool(val: bool, span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Boolean(val))),
+            span,
+        }
+    }
+
+    pub fn new_string(val: &str, span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::String(val.to_owned()))),
+            span,
+        }
+    }
+
+    pub fn new_number(num: f64, span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Number(num))),
+            span,
+        }
+    }
+
+    pub fn new_symbol(symbol: String, span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Symbol(symbol))),
+            span,
+        }
+    }
+
+    pub fn new_quote(node: Node, quote_span: Span) -> Self {
+        let span = quote_span.merge(&node.span);
+        Node::new_pair(
+            Node::new_symbol("quote".to_owned(), quote_span),
+            Node::new_pair(node, Node::new_nil(span), span),
+            span,
+        )
+    }
+
+    pub fn new_primitive(primitive: PrimitiveFunc, name: &str, span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Procedure(Procedure::Primitive(
+                primitive,
+                name.to_owned(),
+            )))),
+            span,
+        }
+    }
+
+    /// Creates a new iterator for lazily evaluating arguments from a Scheme list.
+    ///
+    /// # Arguments
+    /// * `env`: The environment in which to evaluate each argument.
+    pub fn into_eval_iter(self: Node, env: Rc<RefCell<Environment>>) -> EvaluatedNodeIterator {
+        EvaluatedNodeIterator {
+            current_node: self,
+            env,
+        }
+    }
+
+    pub fn into_iter(self: Node) -> NodeIterator {
+        NodeIterator { current_node: self }
     }
 }
 
@@ -39,10 +114,119 @@ pub enum Sexpr {
     Pair(Node, Node), // e.g., (+ 1 2), (define x 10)
     Nil,              // Represents the empty list '()
     Procedure(Procedure),
-    // --- Future additions ---
-    // Pair(Box<Sexpr>, Box<Sexpr>), // For dotted pairs, alternative list rep
-    // Primitive(PrimitiveFunc),
-    // Lambda(LambdaExpr),
+}
+
+pub struct NodeIterator {
+    current_node: Node, // Current part of the argument list (Pair or Nil)
+}
+
+impl Iterator for EvaluatedNodeIterator {
+    type Item = EvalResult; // Each item is the result of evaluating an argument expression
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sexpr = self.current_node.kind.borrow();
+        match &*sexpr {
+            Sexpr::Pair(car_node, cdr_node) => {
+                // This is the argument expression we need to evaluate
+                let result = evaluate(car_node.clone(), self.env.clone());
+
+                let node = cdr_node.clone();
+                drop(sexpr);
+                // Advance the iterator's state to the rest of the list for the *next* call
+                self.current_node = node;
+
+                // Lazily evaluate the current argument expression
+                Some(result)
+            }
+            Sexpr::Nil => {
+                // We've reached the end of a proper list
+                None
+            }
+            _ => {
+                let result = evaluate(self.current_node.clone(), self.env.clone());
+                // we've encountered a dotted pair (e.g., (a b . c) so return c)
+                // It doesn't matter what the span is here, because it's never returned
+                drop(sexpr);
+                self.current_node = Node::new_nil(Span::default());
+                Some(result)
+            }
+        }
+    }
+}
+
+impl FromIterator<Node> for Node {
+    /// Creates a Scheme list (a `Node` that is `Pair` or `Nil`) from an iterator of `Node`s.
+    /// The `Node`s in the iterator are used as the elements of the list.
+    /// Spans for the newly created `Pair` structures and the final `Nil` will be synthetic.
+    fn from_iter<I: IntoIterator<Item = Node>>(iter: I) -> Self {
+        let items: Vec<Node> = iter.into_iter().collect();
+
+        // The span for synthetically created list structure nodes.
+        // You might want a more specific span if available (e.g., from the `(list ...)` call itself)
+        // but FromIterator is generic and doesn't have that context.
+        let span = Span::default();
+
+        let mut current_list_node = Node::new_nil(span.clone());
+
+        // Iterate in reverse to build the list: (cons item (cons item ... nil))
+        for item_node in items.into_iter().rev() {
+            // The `item_node` already has its own span from its source or evaluation.
+            // The new `Pair` node we're creating needs a span.
+            // Using a synthetic span for the pair structure itself is common.
+            // Alternatively, you could try to use `item_node.span.clone()`, but
+            // `synthetic_span` is cleaner for the structural part.
+            current_list_node = Node::new_pair(item_node, current_list_node, span.clone());
+        }
+
+        // If items was empty, current_list_node is still the initial Nil node.
+        // If items was not empty, the outermost pair's span is `synthetic_span`.
+        // If you want the overall list node to have a span derived from its contents
+        // or a call site, that would need to be adjusted *after* collection.
+        // For example, if `items` is not empty, you could set:
+        // if let Some(first_item) = items.first() {
+        //     current_list_node.span = first_item.span.clone(); // Or some combination
+        // }
+        // However, for a generic FromIterator, keeping synthetic_span for the structure is fine.
+
+        current_list_node
+    }
+}
+
+pub struct EvaluatedNodeIterator {
+    current_node: Node,            // Current part of the argument list (Pair or Nil)
+    env: Rc<RefCell<Environment>>, // Environment for evaluation
+}
+
+impl Iterator for NodeIterator {
+    type Item = Node; // Each item is the result of evaluating an argument expression
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sexpr = self.current_node.kind.borrow();
+        match &*sexpr {
+            Sexpr::Pair(car_node, cdr_node) => {
+                let node = car_node.clone();
+                let next_node = cdr_node.clone();
+                drop(sexpr);
+                // Advance the iterator's state to the rest of the list for the *next* call
+                self.current_node = next_node;
+
+                // Lazily evaluate the current argument expression
+                Some(node)
+            }
+            Sexpr::Nil => {
+                // We've reached the end of a proper list
+                None
+            }
+            _ => {
+                let node = self.current_node.clone();
+                // we've encountered a dotted pair (e.g., (a b . c) so return c)
+                // It doesn't matter what the span is here, because it's never returned
+                drop(sexpr);
+                self.current_node = Node::new_nil(Span::default());
+                Some(node)
+            }
+        }
+    }
 }
 
 // Implement Display trait for pretty printing the Sexpr values
@@ -55,38 +239,8 @@ impl fmt::Display for Sexpr {
             Sexpr::Pair(head, tail) => {
                 write!(f, "({}", head)?;
 
-                // Start iterating with the first tail Node
-                let mut current_tail_for_loop: Node = tail.clone();
-
-                loop {
-                    // Borrow the Sexpr kind from the current_tail_for_loop's Rc<RefCell<Sexpr>>
-                    let kind_of_current_tail: Ref<Sexpr> = current_tail_for_loop.kind.borrow();
-
-                    match &*kind_of_current_tail {
-                        Sexpr::Pair(elem_of_pair, next_tail_node) => {
-                            write!(f, " {}", elem_of_pair)?;
-                            // Update current_tail_for_loop for the next iteration by cloning the next Node.
-                            // The borrow `kind_of_current_tail` is *not* on `next_tail_node` yet.
-                            // And `current_tail_for_loop` is separate from `next_tail_node` until assignment.
-                            let temp_next_tail = next_tail_node.clone();
-                            // Explicitly drop the borrow before reassigning to the loop variable
-                            // that was involved in the borrow.
-                            drop(kind_of_current_tail);
-                            current_tail_for_loop = temp_next_tail;
-                        }
-                        Sexpr::Nil => {
-                            // End of a proper list
-                            break;
-                        }
-                        _ => {
-                            // Dotted list: the cdr is not a Pair and not Nil.
-                            // `current_tail_for_loop` is the Node containing this final Sexpr.
-                            write!(f, " . {}", current_tail_for_loop)?;
-                            break;
-                        }
-                    }
-                    // If we didn't break, kind_of_current_tail (the Ref guard) is dropped here naturally
-                    // before the next loop iteration starts.
+                for node in tail.clone().into_iter() {
+                    write!(f, " {}", node)?;
                 }
 
                 write!(f, ")")
@@ -115,7 +269,7 @@ impl fmt::Display for Sexpr {
     }
 }
 
-pub type PrimitiveFunc = fn(Node, Span) -> EvalResult;
+pub type PrimitiveFunc = fn(EvaluatedNodeIterator, Span) -> EvalResult;
 
 #[derive(Clone)] // Need Clone for Sexpr::Procedure
 pub enum Procedure {

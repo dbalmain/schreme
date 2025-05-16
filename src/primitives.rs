@@ -1,8 +1,6 @@
-use std::rc::Rc;
+use crate::{EvalError, EvalResult, Node, Sexpr, Span, types::EvaluatedNodeIterator};
 
-use crate::{EvalError, EvalResult, Node, Sexpr, Span};
-
-fn arity_error(name: &str, expected: usize, actual: usize, span: Span) -> EvalResult {
+fn arity_error<T>(name: &str, expected: usize, actual: usize, span: Span) -> EvalResult<T> {
     Err(EvalError::InvalidArguments(
         format!(
             "Primitive '{}' expects exactly {} arguments, got {}",
@@ -12,486 +10,342 @@ fn arity_error(name: &str, expected: usize, actual: usize, span: Span) -> EvalRe
     ))
 }
 
-fn old_numbers<F: Fn(f64, f64) -> f64>(
-    args: Node,
-    span: Span,
-    start: f64,
-    func: F,
-    operator: &str,
-) -> EvalResult {
-    match args.kind.into_inner() {
-        Sexpr::Pair(car, cdr) => match car.kind.into_inner() {
-            Sexpr::Number(num) => fold_numbers_inner(cdr, span, func(num, start), func, operator),
-            _ => invalid_arg_error(&cdr, operator),
-        },
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Number(func(start, num)), span)),
-        _ => invalid_arg_error(&args, operator),
-    }
-}
-
-fn fold_numbers_inner<F: Fn(f64, f64) -> f64>(
-    args: Node,
-    span: Span,
-    current: f64,
-    func: F,
-    operator: &str,
-) -> EvalResult {
-    match args.kind.into_inner() {
-        Sexpr::Pair(car, cdr) => match car.kind.into_inner() {
-            Sexpr::Number(num) => fold_numbers_inner(cdr, span, func(current, num), func, operator),
-            _ => invalid_arg_error(&cdr, operator),
-        },
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Number(func(current, num)), span)),
-        Sexpr::Nil => Ok(Node::new(Sexpr::Number(current), span)), // Handle the end of the list
-        _ => invalid_arg_error(&args, operator),
-    }
-}
-
-/*
-// Checks the number of arguments
-macro_rules! check_arity {
-    ($args:expr, $expected:expr, $span:expr, $name:expr) => {
-        if $args.len() != $expected {
-            return arity_error($name, $expected, $args.len(), $span);
-        }
-    };
-    // Variant for minimum number of args
-    ($args:expr, min $expected:expr, $span:expr, $name:expr) => {
-        if $args.len() < $expected {
-            return Err(EvalError::InvalidArguments(
-                format!(
-                    "Primitive '{}' expects at least {} arguments, got {}",
-                    $name,
-                    $expected,
-                    $args.len()
-                ),
-                $span,
-            ));
-        }
-    };
-    // Variant for range of args (inclusive)
-    ($args:expr, $min:expr, $max:expr, $span:expr, $name:expr) => {
-        if !($min..=$max).contains(&$args.len()) {
-            return Err(EvalError::InvalidArguments(
-                format!(
-                    "Primitive '{}' expects between {} and {} arguments, got {}",
-                    $name,
-                    $min,
-                    $max,
-                    $args.len()
-                ),
-                $span,
-            ));
-        }
-    };
-}
-
-// Extracts a number from a Node or returns WrongType error
-macro_rules! expect_number {
-    ($node:expr, $span:expr, $name:expr, $arg_pos:expr) => {
-        match $node.kind {
-            Sexpr::Number(n) => n,
-            _ => {
-                return Err(EvalError::InvalidArguments(
-                    // Or define a dedicated WrongType error
-                    format!(
-                        "Primitive '{}' expects a number for argument {}, got {}",
-                        $name,
-                        $arg_pos,
-                        $node.kind.type_name()
-                    ),
-                    $span, // Use call span for arg type errors
-                ));
-            }
-        }
-    };
-    // Variant without arg_pos specified
-    ($node:expr, $span:expr, $name:expr) => {
-        match $node.kind {
-            Sexpr::Number(n) => n,
-            _ => {
-                return Err(EvalError::InvalidArguments(
-                    format!(
-                        "Primitive '{}' expects number arguments, got {}",
-                        $name,
-                        $node.kind.type_name()
-                    ),
-                    $span,
-                ))
-            }
-        }
-    };
-}
-
-// Helper to check if a Node is a list (Sexpr::List or Sexpr::Nil)
-// Returns EvalError if not.
-// We might refine this later if we introduce proper Pairs vs Lists vs Nil distinction.
-fn expect_list_or_nil(
-    node: &Node,
-    span: Span,
-    prim_name: &str,
-    arg_pos: usize,
-) -> Result<(), EvalError> {
-    match node.kind {
-        Sexpr::List(_) | Sexpr::Nil => Ok(()),
+fn number_from_node(node: &Node, index: usize, operator: &str) -> EvalResult<f64> {
+    match *node.kind.borrow() {
+        Sexpr::Number(num) => Ok(num),
         _ => Err(EvalError::InvalidArguments(
             format!(
-                "Primitive '{}' expects argument {} to be a list or nil, got {}",
-                prim_name,
-                arg_pos,
-                node.kind.type_name()
+                "Primitive '{}' expects a list of numbers, got {} as argument {}",
+                operator,
+                node.kind.borrow().type_name(),
+                index
             ),
-            span, // Use call span
+            node.span,
         )),
     }
 }
-*/
-
-// TODO add arg index
-fn invalid_arg_error(node: &Node, operator: &str) -> EvalResult {
-    Err(EvalError::InvalidArguments(
-        format!(
-            "Primitive '{}' expects a list of numbers, got {}",
-            operator,
-            node.kind.borrow().type_name()
-        ),
-        node.span,
-    ))
-}
 
 fn fold_numbers<F: Fn(f64, f64) -> f64>(
-    args: Node,
+    args: EvaluatedNodeIterator,
     span: Span,
     start: f64,
     func: F,
     operator: &str,
 ) -> EvalResult {
-    match &*args.kind.borrow() {
-        Sexpr::Pair(car, cdr) => match *car.kind.borrow() {
-            Sexpr::Number(num) => fold_numbers(cdr.clone(), span, func(num, start), func, operator),
-            _ => invalid_arg_error(&cdr, operator),
-        },
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Number(func(start, *num)), span)),
-        _ => invalid_arg_error(&args, operator),
+    let mut acc = start;
+    for (i, arg_result) in args.enumerate() {
+        let arg = arg_result?;
+        let num = number_from_node(&arg, i + 1, operator)?;
+        acc = func(acc, num);
     }
+    Ok(Node::new(Sexpr::Number(acc), span))
 }
 
-fn compare_numbers_with<F: Fn(f64, f64) -> bool>(
-    args: &Node,
-    span: Span,
-    compare: F,
-    operator: &str,
-    current: f64,
-) -> EvalResult {
-    match &*args.kind.borrow() {
-        Sexpr::Pair(first, rest) => {
-            if let Sexpr::Number(num) = *first.kind.borrow() {
-                if !compare(current, num) {
-                    Ok(Node::new(Sexpr::Boolean(false), span))
-                } else {
-                    compare_numbers_with(&rest, span, compare, operator, num)
-                }
-            } else {
-                return invalid_arg_error(&args, operator);
-            }
-        }
-        Sexpr::Nil => Ok(Node::new(Sexpr::Boolean(false), span)),
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Boolean(compare(current, *num)), span)),
-        _ => invalid_arg_error(&args, operator),
-    }
-}
-
-// TODO add arg index
 fn compare_numbers<F: Fn(f64, f64) -> bool>(
-    args: &Node,
+    args: EvaluatedNodeIterator,
     span: Span,
     compare: F,
     operator: &str,
 ) -> EvalResult {
-    // (= n1 n2 ...) -> boolean
-    match &*args.kind.borrow() {
-        Sexpr::Pair(first, rest) => {
-            if let Sexpr::Number(num) = *first.kind.borrow() {
-                compare_numbers_with(rest, span, compare, operator, num)
-            } else {
-                return invalid_arg_error(&args, operator);
-            }
+    let mut args = args.enumerate();
+    let first_arg = match args.next() {
+        Some((_, arg)) => arg?,
+        None => return arity_error(operator, 2, 1, span),
+    };
+    let mut current_num = number_from_node(&first_arg, 1, operator)?;
+    for (i, arg_result) in args {
+        let arg = arg_result?;
+        let num = number_from_node(&arg, i + 1, operator)?;
+        if !compare(current_num, num) {
+            return Ok(Node::new(Sexpr::Boolean(false), span));
         }
-        Sexpr::Number(_) => return arity_error(operator, 2, 1, span),
-        _ => {
-            return invalid_arg_error(&args, operator);
-        }
+        current_num = num;
     }
+    Ok(Node::new(Sexpr::Boolean(true), span))
 }
 
-fn any_node<F: Fn(Node) -> bool>(args: Node, predicate: F) -> Option<Span> {
-    match *args.kind.borrow() {
-        Sexpr::Pair(ref car, ref cdr) => {
-            if predicate(car.clone()) {
-                Some(car.span)
-            } else {
-                any_node(cdr.clone(), predicate)
+//fn any_node<F: Fn(Node) -> bool>(
+//    args: EvaluatedNodeIterator,
+//    predicate: F,
+//) -> EvalResult<Option<Span>> {
+//    for arg_result in args {
+//        let arg = arg_result?;
+//        if predicate(arg.clone()) {
+//            return Ok(Some(arg.span));
+//        }
+//    }
+//    Ok(None)
+//}
+//
+//fn all_nodes<F: Fn(Node) -> bool>(args: EvaluatedNodeIterator, predicate: F) -> EvalResult<bool> {
+//    for arg_result in args {
+//        let arg = arg_result?;
+//        if !predicate(arg.clone()) {
+//            return Ok(false);
+//        }
+//    }
+//    Ok(true)
+//}
+
+fn all_nodes_at_least_one<F: Fn(Node) -> bool>(
+    mut args: EvaluatedNodeIterator,
+    name: &str,
+    span: Span,
+    predicate: F,
+) -> EvalResult<bool> {
+    // Verify the first argument exists
+    match args.next() {
+        Some(arg) => {
+            if !predicate(arg?.clone()) {
+                return Ok(false);
             }
         }
-        Sexpr::Nil => None,
-        _ => {
-            if predicate(args.clone()) {
-                Some(args.span)
-            } else {
-                None
-            }
+        None => {
+            return arity_error(name, 1, 0, span);
         }
     }
+    for arg_result in args {
+        let arg = arg_result?;
+        if !predicate(arg.clone()) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
-pub fn prim_add(args: Node, span: Span) -> EvalResult {
+pub fn prim_add(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (+) -> 0
     // (+ 1 2 3) -> 6
     fold_numbers(args, span, 0.0, |acc, val| acc + val, "+")
 }
 
-pub fn prim_sub(args: Node, span: Span) -> EvalResult {
+pub fn prim_sub(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (- x) -> -x
     // (- x y z) -> x - y - z
-    match *args.kind.borrow() {
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Number(-num), span)),
-        Sexpr::Pair(car, cdr) => match *car.kind.borrow() {
-            Sexpr::Number(num) => fold_numbers(cdr, span, num, |acc, val| acc - val, operator),
-            _ => invalid_arg_error(&cdr, "-"),
-        },
-        _ => invalid_arg_error(&args, "-"),
+    let mut args = args.enumerate();
+    let first_arg = match args.next() {
+        Some((_, arg)) => arg?,
+        None => return arity_error("-", 2, 1, span),
+    };
+    let mut acc = number_from_node(&first_arg, 1, "-")?;
+    let second_arg = match args.next() {
+        Some((_, arg)) => arg?,
+        None => return Ok(Node::new(Sexpr::Number(-acc), span)),
+    };
+    let num = number_from_node(&second_arg, 2, "-")?;
+    acc -= num;
+    for (i, arg_result) in args {
+        let num = number_from_node(&arg_result?, i + 1, "-")?;
+        acc -= num;
     }
+    Ok(Node::new(Sexpr::Number(acc), span))
 }
 
-pub fn prim_mul(args: Node, span: Span) -> EvalResult {
+pub fn prim_mul(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (*) -> 1
     // (* 1 2 3) -> 6
     fold_numbers(args, span, 1.0, |acc, val| acc * val, "*")
 }
 
-pub fn prim_div(args: Node, span: Span) -> EvalResult {
+pub fn prim_div(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (/ x) -> 1/x
+    // (/ x y z) -> x / y / z
+
     let div_by_zero_error = |span| {
         Err(EvalError::InvalidArguments(
             "Division by zero: (/ 0)".to_string(),
             span,
         ))
     };
-    match &*args.kind.borrow() {
-        Sexpr::Number(num) if *num == 0.0 => div_by_zero_error(span),
-        Sexpr::Number(num) => Ok(Node::new(Sexpr::Number(1.0 / num), span)),
-        Sexpr::Pair(car, cdr) => match *car.kind.borrow() {
-            Sexpr::Number(num) => {
-                match any_node(cdr.clone(), |node| {
-                    matches!(*node.kind.borrow(), Sexpr::Number(0.0))
-                }) {
-                    Some(span) => div_by_zero_error(span),
-                    None => fold_numbers(args.clone(), span, num, |acc, val| acc / val, "/"),
-                }
-            }
-            _ => invalid_arg_error(&cdr, "-"),
-        },
-        _ => invalid_arg_error(&args, "-"),
+
+    let mut args = args.enumerate();
+    let first_arg = match args.next() {
+        Some((_, arg)) => arg?,
+        None => return arity_error("/", 2, 1, span),
+    };
+    let mut acc = number_from_node(&first_arg, 1, "/")?;
+    let second_arg = match args.next() {
+        Some((_, arg)) => arg?,
+        None => {
+            return if acc == 0.0 {
+                div_by_zero_error(first_arg.span)
+            } else {
+                Ok(Node::new(Sexpr::Number(1.0 / acc), span))
+            };
+        }
+    };
+    let num = number_from_node(&second_arg, 2, "/")?;
+    acc /= num;
+    for (i, arg_result) in args {
+        let num = number_from_node(&arg_result?, i + 1, "/")?;
+        acc /= num;
     }
+    Ok(Node::new(Sexpr::Number(acc), span))
 }
 
-pub fn prim_equals(args: &Node, span: Span) -> EvalResult {
+pub fn prim_equals(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     compare_numbers(args, span, |left, right| left == right, "=")
 }
 
-pub fn prim_less_than(args: &Node, span: Span) -> EvalResult {
+pub fn prim_less_than(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     compare_numbers(args, span, |left, right| left < right, "<")
 }
 
-pub fn prim_less_than_or_equals(args: &Node, span: Span) -> EvalResult {
+pub fn prim_less_than_or_equals(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     compare_numbers(args, span, |left, right| left <= right, "<=")
 }
 
-pub fn prim_greater_than(args: &Node, span: Span) -> EvalResult {
+pub fn prim_greater_than(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     compare_numbers(args, span, |left, right| left > right, ">")
 }
 
-pub fn prim_greater_than_or_equals(args: &Node, span: Span) -> EvalResult {
+pub fn prim_greater_than_or_equals(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     compare_numbers(args, span, |left, right| left >= right, ">=")
 }
 
 // --- List Primitives ---
 
-pub fn prim_cons(args: &Node, span: Span) -> EvalResult {
-    // (cons item list) -> [item, ..list]
-    if let Sexpr::Pair(head, tail) = &*args.kind.borrow() {
-        if let Sexpr::Pair(tail, should_be_nil) = &*tail.kind.borrow() {
-            if let Sexpr::Nil = *should_be_nil.kind.borrow() {
-                // Create a new list with head as the first element and tail as the rest
-                Ok(Node::new(Sexpr::Pair(head.clone(), tail.clone()), span))
-            } else {
-                // TODO: get the actual number of arguments
-                arity_error("cons", 2, 3, span)
-            }
-        } else {
-            // (cons a b) => (a . b)
-            Ok(Node::new(Sexpr::Pair(head.clone(), tail.clone()), span))
-        }
-    } else {
-        arity_error("cons", 2, 1, span)
+fn expect_node(
+    args: &mut EvaluatedNodeIterator,
+    operator: &str,
+    index: usize,
+    arity: usize,
+    span: Span,
+) -> EvalResult {
+    match args.next() {
+        Some(Ok(node)) => Ok(node),
+        Some(Err(err)) => Err(err),
+        None => arity_error(operator, arity, index, span),
     }
 }
 
-pub fn prim_car(args: &Node, span: Span) -> EvalResult {
-    // (car list) -> first item
-    // Check the argment was a pair
-    match &*args.kind.borrow() {
-        Sexpr::Pair(arg, should_be_nil) => {
-            if let Sexpr::Nil = *should_be_nil.kind.borrow() {
-                // Check the argment was a pair
-                if let Sexpr::Pair(car, _) = &*arg.kind.borrow() {
-                    Ok(car.clone())
-                } else {
-                    Err(EvalError::InvalidArguments(
-                        format!(
-                            "car: Expected a list or pair, got {}",
-                            args.kind.borrow().type_name()
-                        ),
-                        args.span, // Span of the incorrect argument
-                    ))
-                }
-            } else {
-                // TODO: get the actual number of arguments
-                arity_error("car", 1, 2, span)
-            }
-        }
-        Sexpr::Nil => arity_error("car", 1, 0, span),
-        _ => {
-            Err(EvalError::InvalidArguments(
-                format!(
-                    "car: Expected a list or pair, got {}",
-                    args.kind.borrow().type_name()
-                ),
-                args.span, // Span of the incorrect argument
-            ))
-        }
-    }
-}
-
-pub fn prim_cdr(args: Vec<Node>, span: Span) -> EvalResult {
-    // (cdr list) -> rest of list
-    if let [list] = &args[..] {
-        expect_list_or_nil(list, span, "car", 1)?;
-        match &list.kind {
-            Sexpr::List(elements) => {
-                if elements.is_empty() {
-                    // Scheme standard: Error on cdr of empty list
-                    Err(EvalError::InvalidArguments(
-                        "cdr: Cannot take cdr of empty list".to_string(),
-                        list.span,
-                    ))
-                } else if elements.len() == 1 {
-                    // cdr of a single-element list is the empty list '()
-                    Ok(Node {
-                        kind: Sexpr::Nil,
-                        span,
-                    }) // Result span is call span
-                } else {
-                    // Create a new Vec containing elements from the second onwards
-                    let rest_elements: Vec<Node> = elements[1..].to_vec();
-                    Ok(Node {
-                        kind: Sexpr::List(rest_elements),
-                        span, // Result span is call span
-                    })
-                }
-            }
-            // R5RS/R6RS error on cdr of non-pair (which includes Nil for proper lists)
-            Sexpr::Nil => Err(EvalError::InvalidArguments(
-                "cdr: Expected a pair/non-empty list, got ()".to_string(),
-                list.span,
-            )),
-            _ => Err(EvalError::InvalidArguments(
-                format!(
-                    "cdr: Expected a list or pair, got {}",
-                    list.kind.type_name()
-                ),
-                list.span,
-            )),
-        }
-    } else {
-        arity_error("car", 2, args.len(), span)
-    }
-}
-
-pub fn prim_list(args: Vec<Node>, span: Span) -> EvalResult {
-    // (list item1 item2 ...) -> new list containing items
-    // Args are already evaluated nodes
-    // We just need to collect the cloned nodes into a new Sexpr::List
-    // If args is empty, result is '() -> Sexpr::Nil
-    if args.is_empty() {
-        Ok(Node {
-            kind: Sexpr::Nil,
+fn expect_no_more_args(
+    args: &mut EvaluatedNodeIterator,
+    operator: &str,
+    arity: usize,
+    span: Span,
+) -> EvalResult<()> {
+    match args.next() {
+        Some(_) => Err(EvalError::InvalidArguments(
+            format!(
+                "Primitive '{}' expects exactly {} arguments, got more than that",
+                operator, arity
+            ),
             span,
-        })
-    } else {
-        Ok(Node {
-            kind: Sexpr::List(args), // args is already Vec<Node>, directly use it
-            span,                    // Result span is call span
-        })
+        )),
+        None => Ok(()),
     }
+}
+
+pub fn prim_cons(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (cons item '()) -> '(item)
+    // (cons a '(b c)) -> '(a b c)
+    // (cons a b) -> '(a . b)
+    let car = expect_node(&mut args, "cons", 1, 2, span)?;
+    let cdr = expect_node(&mut args, "cons", 2, 2, span)?;
+    expect_no_more_args(&mut args, "cons", 2, span)?;
+    Ok(Node::new(Sexpr::Pair(car, cdr), span))
+}
+
+pub fn prim_car(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (car '()) -> Error
+    // (car a) -> Error // a is not a list
+    // (car '(a b c)) -> a
+    let first_arg_node = expect_node(&mut args, "car", 1, 1, span)?;
+    expect_no_more_args(&mut args, "car", 1, span)?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(car, _) => Ok(car.clone()),
+        _ => {
+            return Err(EvalError::InvalidArguments(
+                format!("car: Expected a pair, got {}", first_arg.type_name()),
+                first_arg_node.span,
+            ));
+        }
+    }
+}
+
+pub fn prim_cdr(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (cdr '()) -> Error
+    // (cdr a) -> Error // a is not a list
+    // (cdr '(a b c)) -> '(b c)
+    let first_arg_node = expect_node(&mut args, "cdr", 1, 1, span)?;
+    expect_no_more_args(&mut args, "cdr", 1, span)?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => Ok(cdr.clone()),
+        _ => {
+            return Err(EvalError::InvalidArguments(
+                format!("car: Expected a pair, got {}", first_arg.type_name()),
+                first_arg_node.span,
+            ));
+        }
+    }
+}
+
+pub fn prim_list(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (list item1 item2 ...) -> '(item1 item2 ...)
+    let items: Vec<Node> = EvalResult::<Vec<Node>>::from_iter(args)?;
+
+    if items.is_empty() {
+        // nil represents the whole node in the case
+        return Ok(Node::new_nil(span));
+    }
+
+    // We have sime items in the list so put nil at the very end of the list function
+    let mut curr = Node::new_nil(Span::new(span.end - 1, span.end));
+
+    // Iterate in reverse to build the list: (cons item (cons item ... nil))
+    for item_node in items.into_iter().rev() {
+        let span = item_node.span.merge(&curr.span);
+        curr = Node::new_pair(item_node, curr, span);
+    }
+
+    Ok(curr)
 }
 
 // --- Type Predicates ---
-
-pub fn prim_is_null(args: &Node, span: Span) -> EvalResult {
-    // (null? obj) -> boolean
-    let is_null = matches!(args.kind, Sexpr::Nil);
-    Ok(Node {
-        kind: Sexpr::Boolean(is_null),
-        span,
-    })
-}
-
-// Add number?, boolean?, symbol?, string?, procedure? similarly
-
-fn expect_one_arg(args: &Node, span: Span, operator: &str) -> EvalResult<&Node> {
-    match args.kind {
-        Sexpr::Pair(first, should_be_nil) => match should_be_nil.kind {
-            Sexpr::Nil => Ok(first),
-            _ => arity_error(operator, 1, 2, span),
-        },
-        _ => Ok(args),
-    }
-}
-macro_rules! is_type {
-    ($arg:expr, $type:pat, $name:expr, $span:expr) => {
-        match $arg.kind {
-            Sexpr::Pair(first, should_be_nil) => {
-                match should_be_nil
-            }
-            kind => Ok(Node {
-                kind: Sexpr::Boolean(matches!(kind, $type)),
-                span: $span,
-            })
-        }
+macro_rules! type_predicate {
+    ($args:expr, $type:pat, $name:expr, $span:expr) => {
+        Ok(Node::new_bool(
+            all_nodes_at_least_one($args, $name, $span, |arg| {
+                matches!(*arg.kind.borrow(), $type)
+            })?,
+            $span,
+        ))
     };
 }
 
-pub fn prim_is_pair(args: &Node, span: Span) -> EvalResult {
-    // (pair? obj) -> boolean
-    is_type!(args, Sexpr::Pair(_, _), "pair?", span)
+pub fn prim_is_null(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (null?) -> error
+    // (null? obj) -> true if obj is nil
+    // (null? a b c) -> true if a, b and c are all nil
+    type_predicate!(args, Sexpr::Nil, "null?", span)
 }
 
-pub fn prim_is_number(args: Vec<Node>, span: Span) -> EvalResult {
-    is_type!(args, Sexpr::Number(_), "number?", span)
+pub fn prim_is_pair(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (pair?) -> error
+    // (pair? obj) -> true if obj is a pair
+    // (pair? a b c) -> true if a, b and c are pairs
+    type_predicate!(args, Sexpr::Pair(_, _), "null?", span)
 }
 
-pub fn prim_is_boolean(args: Vec<Node>, span: Span) -> EvalResult {
-    is_type!(args, Sexpr::Boolean(_), "boolean?", span)
+pub fn prim_is_number(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    type_predicate!(args, Sexpr::Number(_), "number?", span)
 }
 
-pub fn prim_is_symbol(args: Vec<Node>, span: Span) -> EvalResult {
-    is_type!(args, Sexpr::Symbol(_), "symbol?", span)
+pub fn prim_is_boolean(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    type_predicate!(args, Sexpr::Boolean(_), "boolean?", span)
 }
 
-pub fn prim_is_string(args: Vec<Node>, span: Span) -> EvalResult {
-    is_type!(args, Sexpr::String(_), "string?", span)
+pub fn prim_is_symbol(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    type_predicate!(args, Sexpr::Symbol(_), "symbol?", span)
 }
 
-pub fn prim_is_procedure(args: Vec<Node>, span: Span) -> EvalResult {
-    is_type!(args, Sexpr::Procedure(_), "procedure?", span)
+pub fn prim_is_string(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    type_predicate!(args, Sexpr::String(_), "string?", span)
+}
+
+pub fn prim_is_procedure(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    type_predicate!(args, Sexpr::Procedure(_), "procedure?", span)
 }

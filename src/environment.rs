@@ -1,6 +1,5 @@
-use crate::Sexpr; // Values stored in the environment are Nodes
 use crate::source::Span;
-use crate::types::{Node, PrimitiveFunc, Procedure};
+use crate::types::{Node, PrimitiveFunc};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -144,11 +143,7 @@ impl Environment {
 
     /// Helper to add a primitive procedure to the environment.
     fn add_primitive(&mut self, name: &str, func: PrimitiveFunc) {
-        let node = Node {
-            kind: Sexpr::Procedure(Procedure::Primitive(func, name.to_string())),
-            // Use a default span for primitives, or a special marker span
-            span: Span::default(),
-        };
+        let node = Node::new_primitive(func, name, Span::default());
         self.define(name.to_string(), node);
     }
 }
@@ -157,20 +152,14 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Sexpr; // Needed to construct Nodes for testing
 
     // Helper to create a dummy node with default span
     fn num_node(n: f64) -> Node {
-        Node {
-            kind: Sexpr::Number(n),
-            span: Span::default(),
-        }
+        Node::new_number(n, Span::default())
     }
+
     fn sym_node(s: &str) -> Node {
-        Node {
-            kind: Sexpr::Symbol(s.to_string()),
-            span: Span::default(),
-        }
+        Node::new_symbol(s.to_string(), Span::default())
     }
 
     #[test]

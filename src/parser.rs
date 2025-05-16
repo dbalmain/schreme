@@ -3,7 +3,6 @@ use crate::lexer::{LexerError, Token, TokenKind}; // Assuming Token is in lexer
 use crate::types::{Node, Sexpr};
 use std::fmt;
 use std::iter::Peekable;
-use std::rc::Rc;
 use std::vec::IntoIter; // To iterate over Vec<Token>
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +65,7 @@ type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser {
     // We iterate over owned Tokens, consuming them.
+    // TODO: can we remove Peekable here?
     tokens: Peekable<IntoIter<Token>>,
 }
 
@@ -82,9 +82,9 @@ impl Parser {
     }
 
     // Peeks at the next token without consuming.
-    fn peek_token(&mut self) -> Option<&Token> {
-        self.tokens.peek()
-    }
+    //fn peek_token(&mut self) -> Option<&Token> {
+    //    self.tokens.peek()
+    //}
 
     /// Parses a single S-expression from the token stream.
     pub fn parse_expr_with_token(&mut self, token: Option<Token>) -> ParseResult<Node> {
@@ -92,23 +92,17 @@ impl Parser {
             Some(Token {
                 kind: TokenKind::LParen,
                 span,
-            }) => {
-                match self.next_token() {
-                    Some(Token {
-                        kind: TokenKind::RParen,
-                        span: _rparen_span,
-                    }) => {
-                        // Empty list case
-                        self.next_token(); // Consume ')'
-                        return Ok(Node::new(Sexpr::Nil, span.merge(&span)));
-                    }
-                    Some(token) => {
-                        let car_node = self.parse_expr_with_token(Some(token))?;
-                        self.parse_list_recursive(&span, car_node)
-                    }
-                    _ => Err(ParseError::UnexpectedEof("')'".to_string())),
+            }) => match self.next_token() {
+                Some(Token {
+                    kind: TokenKind::RParen,
+                    span: rparen_span,
+                }) => Ok(Node::new_nil(span.merge(&span.merge(&rparen_span)))),
+                Some(token) => {
+                    let car_node = self.parse_expr_with_token(Some(token))?;
+                    self.parse_list_recursive(span.start, car_node)
                 }
-            }
+                _ => Err(ParseError::UnexpectedEof("')'".to_string())),
+            },
             Some(Token {
                 kind: TokenKind::Quote,
                 span,
@@ -144,7 +138,7 @@ impl Parser {
     }
 
     /// Parses a list expression `(...)`.
-    fn parse_list_recursive(&mut self, start_span: &Span, car_node: Node) -> ParseResult<Node> {
+    fn parse_list_recursive(&mut self, start: usize, car_node: Node) -> ParseResult<Node> {
         match self.next_token() {
             Some(Token {
                 kind: TokenKind::Dot,
@@ -156,14 +150,11 @@ impl Parser {
                     Some(Token {
                         kind: TokenKind::RParen,
                         span: rparen_span,
-                    }) => {
-                        let final_span = start_span.merge(&rparen_span);
-                        Ok(Node::new(
-                            // Wrap nodes in Rc
-                            Sexpr::Pair(car_node, cdr_node),
-                            final_span,
-                        ))
-                    }
+                    }) => Ok(Node::new_pair(
+                        car_node,
+                        cdr_node,
+                        Span::new(start, rparen_span.end),
+                    )),
                     // ... (error handling) ...
                     Some(t) => Err(ParseError::UnexpectedToken {
                         found: t,
@@ -178,17 +169,19 @@ impl Parser {
                 kind: TokenKind::RParen,
                 span: rparen_span,
             }) => {
-                // Consume ')'
-                let final_span = start_span.merge(&rparen_span);
-                // Use a shared Nil node if desired, or create new one
-                let nil_node = Node::new(Sexpr::Nil, rparen_span);
-                Ok(Node::new(Sexpr::Pair(car_node, nil_node), final_span))
+                let nil_node = Node::new_nil(rparen_span);
+                Ok(Node::new_pair(
+                    car_node,
+                    nil_node,
+                    Span::new(start, rparen_span.end),
+                ))
             }
             Some(token) => {
                 let next_car_node = self.parse_expr_with_token(Some(token))?;
-                let cdr_node = self.parse_list_recursive(start_span, next_car_node)?;
-                let final_span = start_span.merge(&cdr_node.span); // Calculate span covering whole list
-                Ok(Node::new(Sexpr::Pair(car_node, cdr_node), final_span))
+                let cdr_node =
+                    self.parse_list_recursive(next_car_node.span.start, next_car_node)?;
+                let end = cdr_node.span.end;
+                Ok(Node::new_pair(car_node, cdr_node, Span::new(start, end)))
             }
             None => {
                 // Reached EOF before finding ')'
@@ -201,16 +194,9 @@ impl Parser {
     fn parse_quote(&mut self, quote_span: Span) -> ParseResult<Node> {
         // Parse the expression immediately following the quote
         let quoted_expr = self.parse_expr()?;
-        let span = quote_span.merge(&quoted_expr.span);
 
         // Construct the equivalent (quote expr) S-expression
-        Ok(Node::new(
-            Sexpr::Pair(
-                Node::new(Sexpr::Symbol("quote".to_string()), quote_span),
-                quoted_expr,
-            ),
-            span,
-        ))
+        Ok(Node::new_quote(quoted_expr.clone(), quote_span))
     }
 
     /// Parses the entire sequence of tokens, expecting potentially multiple top-level expressions.
@@ -294,12 +280,39 @@ mod tests {
         Node::new(sexpr, Span::new(start, end))
     }
 
-    fn list(nodes: &[Node], start: usize, end: usize) -> Node {
+    fn node_number(n: f64, start: usize, end: usize) -> Node {
+        Node::new_number(n, Span::new(start, end))
+    }
+
+    fn node_bool(b: bool, start: usize, end: usize) -> Node {
+        Node::new_bool(b, Span::new(start, end))
+    }
+
+    fn node_string(s: &str, start: usize, end: usize) -> Node {
+        Node::new_string(s, Span::new(start, end))
+    }
+
+    fn node_nil(start: usize, end: usize) -> Node {
+        Node::new_nil(Span::new(start, end))
+    }
+
+    fn node_symbol(s: &str, start: usize, end: usize) -> Node {
+        Node::new_symbol(s.to_string(), Span::new(start, end))
+    }
+
+    fn node_pair(car: Node, cdr: Node, start: usize, end: usize) -> Node {
+        Node::new_pair(car, cdr, Span::new(start, end))
+    }
+
+    fn node_list(nodes: &[Node], start: usize, end: usize) -> Node {
         match nodes {
-            [] => Node::new(Sexpr::Nil, Span::new(start, end)),
-            [first, rest @ ..] => Node::new(
-                Sexpr::Pair(first.clone(), list(rest, start, end)),
-                Span::new(start, end),
+            [] => node_nil(end - 1, end),
+            [last] => node_pair(last.clone(), node_nil(end - 1, end), start, end),
+            [first, rest @ ..] => node_pair(
+                first.clone(),
+                node_list(rest, rest[0].span.start, end),
+                start,
+                end,
             ),
         }
     }
@@ -316,19 +329,16 @@ mod tests {
 
     #[test]
     fn test_parse_atoms() {
-        assert_parse("123", node(Sexpr::Number(123.0), 0, 3));
-        assert_parse("-4.5", node(Sexpr::Number(-4.5), 0, 4));
-        assert_parse("symbol", node(Sexpr::Symbol("symbol".to_string()), 0, 6));
-        assert_parse("+", node(Sexpr::Symbol("+".to_string()), 0, 1));
-        assert_parse("#t", node(Sexpr::Boolean(true), 0, 2));
-        assert_parse("#f", node(Sexpr::Boolean(false), 0, 2));
-        assert_parse(
-            r#""hello world""#,
-            node(Sexpr::String("hello world".to_string()), 0, 13),
-        );
+        assert_parse("123", node_number(123.0, 0, 3));
+        assert_parse("-4.5", node_number(-4.5, 0, 4));
+        assert_parse("symbol", node_symbol("symbol", 0, 6));
+        assert_parse("+", node_symbol("+", 0, 1));
+        assert_parse("#t", node_bool(true, 0, 2));
+        assert_parse("#f", node_bool(false, 0, 2));
+        assert_parse(r#""hello world""#, node_string("hello world", 0, 13));
         assert_parse(
             r#""with \"quotes\"""#,
-            node(Sexpr::String("with \"quotes\"".to_string()), 0, 17),
+            node_string("with \"quotes\"", 0, 17),
         );
     }
 
@@ -342,11 +352,11 @@ mod tests {
     fn test_parse_simple_list() {
         assert_parse(
             "(1 2 3)",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Number(1.0), 1, 2),
-                    node(Sexpr::Number(2.0), 3, 4),
-                    node(Sexpr::Number(3.0), 5, 6),
+                    node_number(1.0, 1, 2),
+                    node_number(2.0, 3, 4),
+                    node_number(3.0, 5, 6),
                 ],
                 0,
                 7,
@@ -354,11 +364,11 @@ mod tests {
         );
         assert_parse(
             "(+ 10 20)",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Symbol("+".to_string()), 1, 2),
-                    node(Sexpr::Number(10.0), 3, 5),
-                    node(Sexpr::Number(20.0), 6, 8),
+                    node_symbol("+", 1, 2),
+                    node_number(10.0, 3, 5),
+                    node_number(20.0, 6, 8),
                 ],
                 0,
                 9,
@@ -366,11 +376,11 @@ mod tests {
         );
         assert_parse(
             "(list #t \"hello\")",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Symbol("list".to_string()), 1, 5),
-                    node(Sexpr::Boolean(true), 6, 8),
-                    node(Sexpr::String("hello".to_string()), 9, 16),
+                    node_symbol("list", 1, 5),
+                    node_bool(true, 6, 8),
+                    node_string("hello", 9, 16),
                 ],
                 0,
                 17,
@@ -379,21 +389,32 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_dotted_list() {
+        assert_parse(
+            "(1 . 2)",
+            node_pair(node_number(1.0, 1, 2), node_number(2.0, 5, 6), 0, 7),
+        );
+
+        assert_parse(
+            "(1 2 . 3)",
+            node_pair(
+                node_number(1.0, 1, 2),
+                node_pair(node_number(2.0, 3, 4), node_number(3.0, 7, 8), 3, 9),
+                0,
+                9,
+            ),
+        );
+    }
+
+    #[test]
     fn test_parse_nested_list() {
         assert_parse(
             "(a (b c) d)",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Symbol("a".to_string()), 1, 2),
-                    list(
-                        &[
-                            node(Sexpr::Symbol("b".to_string()), 4, 5),
-                            node(Sexpr::Symbol("c".to_string()), 6, 7),
-                        ],
-                        3,
-                        8,
-                    ),
-                    node(Sexpr::Symbol("d".to_string()), 9, 10),
+                    node_symbol("a", 1, 2),
+                    node_list(&[node_symbol("b", 4, 5), node_symbol("c", 6, 7)], 3, 8),
+                    node_symbol("d", 9, 10),
                 ],
                 0,
                 11,
@@ -401,7 +422,7 @@ mod tests {
         );
         assert_parse(
             "(()())",
-            list(&[node(Sexpr::Nil, 1, 3), node(Sexpr::Nil, 3, 5)], 0, 6),
+            node_list(&[node(Sexpr::Nil, 1, 3), node(Sexpr::Nil, 3, 5)], 0, 6),
         );
     }
 
@@ -409,76 +430,27 @@ mod tests {
     fn test_parse_quote_sugar() {
         assert_parse(
             "'a",
-            list(
-                &[
-                    node(Sexpr::Symbol("quote".to_string()), 0, 1),
-                    node(Sexpr::Symbol("a".to_string()), 1, 2),
-                ],
-                0,
-                2,
-            ),
+            Node::new_quote(node_symbol("a", 1, 2), Span::new(0, 1)),
         );
         assert_parse(
             "'123",
-            list(
-                &[
-                    node(Sexpr::Symbol("quote".to_string()), 0, 1),
-                    node(Sexpr::Number(123.0), 1, 4),
-                ],
-                0,
-                4,
-            ),
+            Node::new_quote(node_number(123.0, 1, 4), Span::new(0, 1)),
         );
-        assert_parse(
-            "'()",
-            list(
-                &[
-                    node(Sexpr::Symbol("quote".to_string()), 0, 1),
-                    node(Sexpr::Nil, 1, 3),
-                ],
-                0,
-                3,
-            ),
-        );
+        assert_parse("'()", Node::new_quote(node_nil(1, 3), Span::new(0, 1)));
         assert_parse(
             "'(1 2)",
-            list(
-                &[
-                    node(Sexpr::Symbol("quote".to_string()), 0, 1),
-                    list(
-                        &[
-                            node(Sexpr::Number(1.0), 2, 3),
-                            node(Sexpr::Number(2.0), 4, 5),
-                        ],
-                        1,
-                        6,
-                    ),
-                ],
-                0,
-                6,
+            Node::new_quote(
+                node_list(&[node_number(1.0, 2, 3), node_number(2.0, 4, 5)], 1, 6),
+                Span::new(0, 1),
             ),
         );
         assert_parse(
             "(list 'a 'b)",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Symbol("list".to_string()), 1, 5),
-                    list(
-                        &[
-                            node(Sexpr::Symbol("quote".to_string()), 6, 7),
-                            node(Sexpr::Symbol("a".to_string()), 7, 8),
-                        ],
-                        6,
-                        8,
-                    ),
-                    list(
-                        &[
-                            node(Sexpr::Symbol("quote".to_string()), 9, 10),
-                            node(Sexpr::Symbol("b".to_string()), 10, 11),
-                        ],
-                        9,
-                        11,
-                    ),
+                    node_symbol("list", 1, 5),
+                    Node::new_quote(node_symbol("a", 7, 8), Span::new(6, 7)),
+                    Node::new_quote(node_symbol("b", 10, 11), Span::new(9, 10)),
                 ],
                 0,
                 12,
@@ -490,10 +462,6 @@ mod tests {
     fn test_parse_errors_unexpected_token() {
         // Using dummy content for the expected error variant
         assert_parse_error("(1 2", ParseError::UnexpectedEof("')'".to_string()));
-        assert_parse_error(
-            "(1 . 2)",
-            unexpected_token(TokenKind::Symbol(".".to_string()), 3, 3, "')'".to_string()),
-        ); // Assuming dot not handled yet
         assert_parse_error(
             ")",
             unexpected_token(TokenKind::RParen, 0, 0, "an atom or '(' or '''".to_string()),
@@ -538,11 +506,11 @@ mod tests {
         // Parser operates on tokens; whitespace/comments are handled by lexer
         assert_parse(
             " ( + 1 2 ) ; comment",
-            list(
+            node_list(
                 &[
-                    node(Sexpr::Symbol("+".to_string()), 3, 4),
-                    node(Sexpr::Number(1.0), 5, 6),
-                    node(Sexpr::Number(2.0), 7, 8),
+                    node_symbol("+", 3, 4),
+                    node_number(1.0, 5, 6),
+                    node_number(2.0, 7, 8),
                 ],
                 1,
                 10,
@@ -550,14 +518,7 @@ mod tests {
         );
         assert_parse(
             " ; comment at start\n   'symbol   ; comment at end\n ",
-            list(
-                &[
-                    node(Sexpr::Symbol("quote".to_string()), 23, 24),
-                    node(Sexpr::Symbol("symbol".to_string()), 24, 30),
-                ],
-                23,
-                30,
-            ),
+            Node::new_quote(node_symbol("symbol", 24, 30), Span::new(23, 24)),
         );
     }
 }
