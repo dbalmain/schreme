@@ -103,7 +103,9 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                 }
 
                 // 3c. Special Form: 'define' (Implement later)
-                // Sexpr::Symbol(ref sym_name) if sym_name == "define" => { ... }
+                Sexpr::Symbol(sym_name) if sym_name == "define" => {
+                    evaluate_define(rest.clone(), env, node.span)
+                }
 
                 // 3d. Special Form: 'set!' (Implement later)
                 // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
@@ -198,6 +200,46 @@ fn evaluate_quote(operands: Node, original_quote_span: Span) -> EvalResult {
     }
 }
 
+fn evaluate_define(
+    operands: Node,
+    env: Rc<RefCell<Environment>>,
+    original_span: Span,
+) -> EvalResult {
+    let operands: Vec<Node> = operands.into_iter().collect();
+
+    if operands.len() == 0 {
+        return invalid_special_form(
+            "define: No arguments provided, expected (define name [value])",
+            original_span,
+        );
+    }
+
+    if operands.len() > 2 {
+        return invalid_special_form(
+            &format!(
+                "define: Too many arguments [{}], expected (define name [value])",
+                operands.len()
+            ),
+            original_span,
+        );
+    }
+
+    if let Sexpr::Symbol(name) = &*operands[0].kind.borrow() {
+        let value = if operands.len() == 2 {
+            evaluate(operands[1].clone(), env.clone())?
+        } else {
+            Node::new_nil(original_span)
+        };
+        env.borrow_mut().define(name.clone(), value.clone());
+        Ok(value)
+    } else {
+        return Err(EvalError::NotASymbol(
+            operands[0].kind.borrow().clone(),
+            operands[0].span,
+        ));
+    }
+}
+
 fn evaluate_procedure(
     operator_node: Node,      // The Node from the AST that represents the operator
     operands_list_node: Node, // The Node from the AST representing the list of operands, e.g. kind is Pair(arg1, Pair(arg2, Nil))
@@ -257,14 +299,14 @@ mod tests {
     use crate::source::Span;
 
     // Helper to evaluate input string and check result kind (ignores span)
-    fn assert_eval_kind(input: &str, expected_kind: Sexpr, env: Option<Rc<RefCell<Environment>>>) {
-        let env = env.unwrap_or_else(Environment::new_global_populated); // Use provided env or create new global one
+    fn assert_eval_kind(input: &str, expected_kind: &Sexpr, env: Option<Rc<RefCell<Environment>>>) {
+        let env = env.unwrap_or_else(Environment::new_global_populated);
         match parse_str(input) {
             Ok(node) => match evaluate(node, env) {
                 Ok(result_node) => {
                     assert_eq!(
                         *result_node.kind.borrow(),
-                        expected_kind,
+                        *expected_kind,
                         "Input: '{}'",
                         input
                     )
@@ -310,21 +352,27 @@ mod tests {
                         expected_error_variant,
                         e
                     );
-                    // Optional: Add checks here for the span within the error `e` if needed
                 }
             },
             Err(e) => panic!("Parsing failed for input '{}': {}", input, e),
         }
     }
 
+    fn eval_str(input: &str, env: Rc<RefCell<Environment>>) -> EvalResult {
+        match parse_str(input) {
+            Ok(node) => evaluate(node, env),
+            Err(e) => panic!("Parsing failed for input '{}': {}", input, e),
+        }
+    }
+
     #[test]
     fn test_eval_self_evaluating() {
-        assert_eval_kind("123", Sexpr::Number(123.0), None);
-        assert_eval_kind("-4.5", Sexpr::Number(-4.5), None);
-        assert_eval_kind("#t", Sexpr::Boolean(true), None);
-        assert_eval_kind("#f", Sexpr::Boolean(false), None);
-        assert_eval_kind(r#""hello""#, Sexpr::String("hello".to_string()), None);
-        assert_eval_kind("()", Sexpr::Nil, None); // Evaluating '()' -> Nil
+        assert_eval_kind("123", &Sexpr::Number(123.0), None);
+        assert_eval_kind("-4.5", &Sexpr::Number(-4.5), None);
+        assert_eval_kind("#t", &Sexpr::Boolean(true), None);
+        assert_eval_kind("#f", &Sexpr::Boolean(false), None);
+        assert_eval_kind(r#""hello""#, &Sexpr::String("hello".to_string()), None);
+        assert_eval_kind("()", &Sexpr::Nil, None); // Evaluating '()' -> Nil
     }
 
     #[test]
@@ -334,7 +382,7 @@ mod tests {
             "x".to_string(),
             Node::new(Sexpr::Number(100.0), Span::default()),
         );
-        assert_eval_kind("x", Sexpr::Number(100.0), Some(env));
+        assert_eval_kind("x", &Sexpr::Number(100.0), Some(env));
     }
 
     #[test]
@@ -348,11 +396,11 @@ mod tests {
 
     #[test]
     fn test_eval_quote() {
-        assert_eval_kind("'1", Sexpr::Number(1.0), None); // '(quote 1) -> 1
-        assert_eval_kind("'a", Sexpr::Symbol("a".to_string()), None); // '(quote a) -> a
-        assert_eval_kind("'#t", Sexpr::Boolean(true), None); // '(quote #t) -> #t
-        assert_eval_kind("'()", Sexpr::Nil, None); // '(quote ()) -> ()
-        assert_eval_kind("(quote ())", Sexpr::Nil, None); // '(quote ()) -> ()
+        assert_eval_kind("'1", &Sexpr::Number(1.0), None); // '(quote 1) -> 1
+        assert_eval_kind("'a", &Sexpr::Symbol("a".to_string()), None); // '(quote a) -> a
+        assert_eval_kind("'#t", &Sexpr::Boolean(true), None); // '(quote #t) -> #t
+        assert_eval_kind("'()", &Sexpr::Nil, None); // '(quote ()) -> ()
+        assert_eval_kind("(quote ())", &Sexpr::Nil, None); // '(quote ()) -> ()
 
         // '(quote (1 2)) -> (1 2)
         // Need a way to represent the expected list structure (Nodes inside Sexpr::List)
@@ -387,18 +435,18 @@ mod tests {
 
     #[test]
     fn test_eval_if_true() {
-        assert_eval_kind("(if #t 1 2)", Sexpr::Number(1.0), None);
-        assert_eval_kind("(if #t 1)", Sexpr::Number(1.0), None); // No alternate
-        assert_eval_kind("(if 0 1 2)", Sexpr::Number(1.0), None); // 0 is true
-        assert_eval_kind("(if '() 1 2)", Sexpr::Number(1.0), None); // '() is true
-        assert_eval_kind("(if \"hello\" 1 2)", Sexpr::Number(1.0), None); // String is true
-        assert_eval_kind("(if (quote x) 1 2)", Sexpr::Number(1.0), None); // Symbol is true
+        assert_eval_kind("(if #t 1 2)", &Sexpr::Number(1.0), None);
+        assert_eval_kind("(if #t 1)", &Sexpr::Number(1.0), None); // No alternate
+        assert_eval_kind("(if 0 1 2)", &Sexpr::Number(1.0), None); // 0 is true
+        assert_eval_kind("(if '() 1 2)", &Sexpr::Number(1.0), None); // '() is true
+        assert_eval_kind("(if \"hello\" 1 2)", &Sexpr::Number(1.0), None); // String is true
+        assert_eval_kind("(if (quote x) 1 2)", &Sexpr::Number(1.0), None); // Symbol is true
     }
 
     #[test]
     fn test_eval_if_false() {
-        assert_eval_kind("(if #f 1 2)", Sexpr::Number(2.0), None);
-        assert_eval_kind("(if #f 1)", Sexpr::Nil, None); // No alternate, returns Nil (our choice)
+        assert_eval_kind("(if #f 1 2)", &Sexpr::Number(2.0), None);
+        assert_eval_kind("(if #f 1)", &Sexpr::Nil, None); // No alternate, returns Nil (our choice)
     }
 
     #[test]
@@ -413,8 +461,16 @@ mod tests {
             Node::new(Sexpr::Boolean(false), Span::default()),
         );
 
-        assert_eval_kind("(if x 1 (if y 2 3))", Sexpr::Number(1.0), Some(env.clone()));
-        assert_eval_kind("(if y 1 (if x 2 3))", Sexpr::Number(2.0), Some(env.clone()));
+        assert_eval_kind(
+            "(if x 1 (if y 2 3))",
+            &Sexpr::Number(1.0),
+            Some(env.clone()),
+        );
+        assert_eval_kind(
+            "(if y 1 (if x 2 3))",
+            &Sexpr::Number(2.0),
+            Some(env.clone()),
+        );
     }
 
     #[test]
@@ -425,7 +481,7 @@ mod tests {
             "cond".to_string(),
             Node::new(Sexpr::Boolean(false), Span::default()),
         );
-        assert_eval_kind("(if cond 1 2)", Sexpr::Number(2.0), Some(env));
+        assert_eval_kind("(if cond 1 2)", &Sexpr::Number(2.0), Some(env));
     }
 
     #[test]
@@ -436,13 +492,13 @@ mod tests {
         // (if #t 'good unbound-variable) should evaluate to 'good without error
         assert_eval_kind(
             "(if #t 'good unbound-variable)",
-            Sexpr::Symbol("good".to_string()),
+            &Sexpr::Symbol("good".to_string()),
             Some(env.clone()),
         );
         // (if #f unbound-variable 'good) should evaluate to 'good without error
         assert_eval_kind(
             "(if #f unbound-variable 'good)",
-            Sexpr::Symbol("good".to_string()),
+            &Sexpr::Symbol("good".to_string()),
             Some(env),
         );
     }
@@ -479,42 +535,42 @@ mod tests {
 
     #[test]
     fn test_eval_primitives_arithmetic() {
-        assert_eval_kind("(+ 1 2)", Sexpr::Number(3.0), None);
-        assert_eval_kind("(+ 10 20 30 40)", Sexpr::Number(100.0), None);
-        assert_eval_kind("(+)", Sexpr::Number(0.0), None); // Add identity
-        assert_eval_kind("(- 10 3)", Sexpr::Number(7.0), None);
-        assert_eval_kind("(- 5)", Sexpr::Number(-5.0), None);
-        assert_eval_kind("(- 10 3 2)", Sexpr::Number(5.0), None);
-        assert_eval_kind("(* 2 3)", Sexpr::Number(6.0), None);
-        assert_eval_kind("(* 2 3 4)", Sexpr::Number(24.0), None);
-        assert_eval_kind("(*)", Sexpr::Number(1.0), None); // Multiply identity
-        assert_eval_kind("(/ 10 2)", Sexpr::Number(5.0), None);
-        assert_eval_kind("(/ 10 4)", Sexpr::Number(2.5), None);
-        assert_eval_kind("(/ 20 2 5)", Sexpr::Number(2.0), None);
-        assert_eval_kind("(/ 5)", Sexpr::Number(0.2), None); // 1/5
+        assert_eval_kind("(+ 1 2)", &Sexpr::Number(3.0), None);
+        assert_eval_kind("(+ 10 20 30 40)", &Sexpr::Number(100.0), None);
+        assert_eval_kind("(+)", &Sexpr::Number(0.0), None); // Add identity
+        assert_eval_kind("(- 10 3)", &Sexpr::Number(7.0), None);
+        assert_eval_kind("(- 5)", &Sexpr::Number(-5.0), None);
+        assert_eval_kind("(- 10 3 2)", &Sexpr::Number(5.0), None);
+        assert_eval_kind("(* 2 3)", &Sexpr::Number(6.0), None);
+        assert_eval_kind("(* 2 3 4)", &Sexpr::Number(24.0), None);
+        assert_eval_kind("(*)", &Sexpr::Number(1.0), None); // Multiply identity
+        assert_eval_kind("(/ 10 2)", &Sexpr::Number(5.0), None);
+        assert_eval_kind("(/ 10 4)", &Sexpr::Number(2.5), None);
+        assert_eval_kind("(/ 20 2 5)", &Sexpr::Number(2.0), None);
+        assert_eval_kind("(/ 5)", &Sexpr::Number(0.2), None); // 1/5
     }
 
     #[test]
     fn test_eval_primitives_comparison() {
-        assert_eval_kind("(= 5 5)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(= 5 5 5 5)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(= 5 6)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(= 5 5 6)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(< 4 5 6)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(< 5 5 6)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(<= 5 5 6)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(>= 5 5 5)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(>= 6 5 5)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(> 6 5 5)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(> 6 5 4)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(< 1 2 3 4 5 6)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(>= 5 5 4 4 4 3)", Sexpr::Boolean(true), None);
+        assert_eval_kind("(= 5 5)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(= 5 5 5 5)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(= 5 6)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(= 5 5 6)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(< 4 5 6)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(< 5 5 6)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(<= 5 5 6)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 5 5 5)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 6 5 5)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(> 6 5 5)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(> 6 5 4)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(< 1 2 3 4 5 6)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(>= 5 5 4 4 4 3)", &Sexpr::Boolean(true), None);
     }
 
     #[test]
     fn test_eval_primitives_nested_calls() {
-        assert_eval_kind("(+ 1 (* 2 3))", Sexpr::Number(7.0), None);
-        assert_eval_kind("(- (+ 5 5) (* 2 3))", Sexpr::Number(4.0), None);
+        assert_eval_kind("(+ 1 (* 2 3))", &Sexpr::Number(7.0), None);
+        assert_eval_kind("(- (+ 5 5) (* 2 3))", &Sexpr::Number(4.0), None);
     }
 
     #[test]
@@ -545,6 +601,10 @@ mod tests {
         Node::new_number(n, Span::new(start, end))
     }
 
+    fn node_symbol(symbol: &str, start: usize, end: usize) -> Node {
+        Node::new_symbol(symbol.to_string(), Span::new(start, end))
+    }
+
     fn node_list(nodes: &[Node], start: usize, end: usize) -> Node {
         match nodes {
             [] => node_nil(end - 1, end),
@@ -566,14 +626,10 @@ mod tests {
         assert_eval_error("((list 1 2) 3)", not_proc_error_list, None); // Need list primitive first for this
     }
 
-    fn node(kind: Sexpr, start: usize, end: usize) -> Node {
-        Node::new(kind, Span::new(start, end))
-    }
-
     #[test]
     fn test_eval_list_primitives() {
         // list
-        assert_eval_kind("(list)", Sexpr::Nil, None);
+        assert_eval_kind("(list)", &Sexpr::Nil, None);
         assert_eval_node(
             "(list 1 2 3)",
             node_list(
@@ -630,8 +686,8 @@ mod tests {
         );
 
         // car
-        assert_eval_kind("(car (list 1 2 3))", Sexpr::Number(1.0), None);
-        assert_eval_kind("(car (cons 'a '()))", Sexpr::Symbol("a".to_string()), None);
+        assert_eval_kind("(car (list 1 2 3))", &Sexpr::Number(1.0), None);
+        assert_eval_kind("(car (cons 'a '()))", &Sexpr::Symbol("a".to_string()), None);
 
         // cdr
         assert_eval_node(
@@ -643,7 +699,7 @@ mod tests {
             ),
             None,
         );
-        assert_eval_kind("(cdr (list 1))", Sexpr::Nil, None); // cdr of single-element list is Nil
+        assert_eval_kind("(cdr (list 1))", &Sexpr::Nil, None); // cdr of single-element list is Nil
         assert_eval_node(
             "(cdr (cons 1 (cons 2 '())))",
             node_pair(node_number(2.0, 19, 20), node_nil(22, 24), 13, 25),
@@ -675,27 +731,180 @@ mod tests {
 
     #[test]
     fn test_eval_type_predicates() {
-        assert_eval_kind("(null? '())", Sexpr::Boolean(true), None);
-        assert_eval_kind("(null? (list))", Sexpr::Boolean(true), None);
-        assert_eval_kind("(null? (list 1))", Sexpr::Boolean(false), None);
-        assert_eval_kind("(null? 1)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(null? '())", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(null? (list))", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(null? (list 1))", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(null? 1)", &Sexpr::Boolean(false), None);
 
-        assert_eval_kind("(pair? (cons 1 (list 2)))", Sexpr::Boolean(true), None); // Assuming cons returns list for now
-        assert_eval_kind("(pair? (list 1))", Sexpr::Boolean(true), None);
+        assert_eval_kind("(pair? (cons 1 (list 2)))", &Sexpr::Boolean(true), None); // Assuming cons returns list for now
+        assert_eval_kind("(pair? (list 1))", &Sexpr::Boolean(true), None);
         //assert_eval_kind("(pair? '(1 . 2))", Sexpr::Boolean(true), None); // Need dotted pair support first
-        assert_eval_kind("(pair? '())", Sexpr::Boolean(false), None);
-        assert_eval_kind("(pair? 1)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(pair? '())", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(pair? 1)", &Sexpr::Boolean(false), None);
 
-        assert_eval_kind("(number? 1)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(number? #f)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(boolean? #t)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(boolean? 0)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(symbol? 'a)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(symbol? \"a\")", Sexpr::Boolean(false), None);
-        assert_eval_kind("(string? \"a\")", Sexpr::Boolean(true), None);
-        assert_eval_kind("(string? 'a)", Sexpr::Boolean(false), None);
-        assert_eval_kind("(procedure? +)", Sexpr::Boolean(true), None);
-        assert_eval_kind("(procedure? 1)", Sexpr::Boolean(false), None);
+        assert_eval_kind("(number? 1)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(number? #f)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(boolean? #t)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(boolean? 0)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(symbol? 'a)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(symbol? \"a\")", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(string? \"a\")", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(string? 'a)", &Sexpr::Boolean(false), None);
+        assert_eval_kind("(procedure? +)", &Sexpr::Boolean(true), None);
+        assert_eval_kind("(procedure? 1)", &Sexpr::Boolean(false), None);
         // Add tests for lambda later: (procedure? (lambda (x) x)) -> true
+    }
+
+    fn new_test_env() -> Rc<RefCell<Environment>> {
+        Environment::new_global_populated() // Or however you create your top-level env
+    }
+
+    // Helper to check if a symbol in the environment has a specific f64 number value
+    fn assert_env_has(env: &Rc<RefCell<Environment>>, name: &str, expected_val: &Sexpr) {
+        let val_node = env
+            .borrow()
+            .get(name, Span::default())
+            .unwrap_or_else(|_| panic!("'{}' not found in environment", name));
+        let other = val_node.kind.borrow();
+        if *expected_val == *other {
+            return;
+        } else {
+            panic!(
+                "Expected '{}' to be {:?}, got {:?}",
+                name, expected_val, other
+            );
+        }
+    }
+
+    fn assert_eval_define(input: &str, env: &Rc<RefCell<Environment>>, expected_result: &Sexpr) {
+        assert_eval_kind(input, expected_result, Some(env.clone()));
+    }
+
+    #[test]
+    fn test_define_number() {
+        let env = new_test_env();
+        let x = &Sexpr::Number(10.0);
+        assert_eval_define("(define x 10)", &env, x);
+        assert_env_has(&env, "x", x);
+    }
+
+    #[test]
+    fn test_define_boolean() {
+        let env = new_test_env();
+        let x = &Sexpr::Boolean(true);
+        let y = &Sexpr::Boolean(false);
+        assert_eval_define("(define x #t)", &env, x);
+        assert_eval_define("(define y #f)", &env, y);
+        assert_env_has(&env, "x", x);
+        assert_env_has(&env, "y", y);
+    }
+
+    #[test]
+    fn test_define_quoted_symbol() {
+        let env = new_test_env();
+        let s = &Sexpr::Symbol("some-symbol".to_string());
+        assert_eval_define("(define s 'some-symbol)", &env, s);
+        assert_env_has(&env, "s", s);
+    }
+
+    #[test]
+    fn test_define_expression() {
+        let env = new_test_env();
+        let result = &Sexpr::Number(10.0);
+        assert_eval_define("(define result (+ 5 (/ 15 3)))", &env, result);
+        assert_env_has(&env, "result", result);
+    }
+
+    #[test]
+    fn test_define_uses_previously_defined_variable() {
+        let env = new_test_env();
+        let five = &Sexpr::Number(5.0);
+        let eight = &Sexpr::Number(8.0);
+        assert_eval_define("(define a 5)", &env, five);
+        assert_eval_define("(define b (+ a 3))", &env, eight);
+        assert_env_has(&env, "a", five);
+        assert_env_has(&env, "b", eight);
+    }
+
+    #[test]
+    fn test_redefine_variable() {
+        let env = new_test_env();
+        let c = &Sexpr::Number(100.0);
+        let cc = &Sexpr::Number(200.0);
+        assert_eval_define("(define val 100)", &env, c);
+        assert_env_has(&env, "val", c);
+        assert_eval_define("(define val 200)", &env, cc);
+        assert_env_has(&env, "val", cc);
+    }
+
+    #[test]
+    fn test_define_nil_by_default() {
+        let env = new_test_env();
+        let nil = &Sexpr::Nil;
+        assert_eval_define("(define x)", &env, nil);
+        assert_env_has(&env, "x", nil);
+    }
+
+    // --- Error Cases ---
+
+    #[test]
+    fn test_define_arity_error_too_few_args_zero() {
+        assert_eval_error(
+            "(define)",
+            &EvalError::InvalidSpecialForm(
+                "define: No arguments provided, expected (define name [value])".to_string(),
+                Span::default(),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_define_arity_error_too_many_args() {
+        assert_eval_error(
+            "(define x 1 2)",
+            &EvalError::InvalidSpecialForm(
+                "define: Too many arguments [3], expected (define name [value])".to_string(),
+                Span::default(),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_define_variable_not_a_symbol_number() {
+        assert_eval_error(
+            "(define 123 456)",
+            &EvalError::NotASymbol(Sexpr::Number(123.0), Span::default()),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_define_variable_not_a_symbol_list() {
+        assert_eval_error(
+            "(define (a b) 456)",
+            &EvalError::NotASymbol(
+                node_list(&[node_symbol("a", 9, 10), node_symbol("b", 11, 12)], 8, 13)
+                    .kind
+                    .borrow()
+                    .clone(),
+                Span::default(),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_define_expression_eval_error() {
+        let env = new_test_env();
+        let result = eval_str("(define x unbound-var)", env);
+        assert_eq!(
+            result,
+            Err(EvalError::EnvError(EnvError::UnboundVariable(
+                "unbound-var".to_string(),
+                Span::new(10, 21)
+            )))
+        );
     }
 }
