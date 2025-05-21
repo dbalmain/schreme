@@ -264,6 +264,7 @@ impl fmt::Display for Sexpr {
             }
             Sexpr::Procedure(procedure) => match procedure {
                 Procedure::Primitive(_, name) => write!(f, "#<primitive:{}>", name),
+                Procedure::Lambda(lambda) => write!(f, "#<lambda:{:?}>", lambda),
             },
         }
     }
@@ -271,16 +272,25 @@ impl fmt::Display for Sexpr {
 
 pub type PrimitiveFunc = fn(EvaluatedNodeIterator, Span) -> EvalResult;
 
+#[derive(Clone, Debug, PartialEq)] // Ensure PartialEq if needed for Procedure
+pub struct Lambda {
+    pub params: Vec<String>,
+    pub variadic_param: Option<String>,
+    pub body: Vec<Node>, // list of body expressions e.g. ((+ x y)) or ((expr1) (expr2))
+    pub env: Rc<RefCell<Environment>>, // The *captured* lexical environment
+}
+
 #[derive(Clone)] // Need Clone for Sexpr::Procedure
 pub enum Procedure {
     Primitive(PrimitiveFunc, String), // The function pointer and its name (for display/debug)
-                                      // Lambda(LambdaData), // Placeholder for user-defined functions
+    Lambda(Rc<Lambda>),               // New: Rc for cheap cloning/sharing of lambda objects
 }
 
 impl fmt::Debug for Procedure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Procedure::Primitive(_, name) => write!(f, "Primitive({})", name),
+            procedure => write!(f, "Lambda({:?})", procedure),
             // Procedure::Lambda(_) => write!(f, "Lambda(...)"), // Later
         }
     }
@@ -295,8 +305,9 @@ impl PartialEq for Procedure {
             (Procedure::Primitive(_f1, n1), Procedure::Primitive(_f2, n2)) => {
                 // Compare function pointers for identity and maybe names
                 n1 == n2
-            } // Add Lambda comparison later
-              // _ => false,
+            }
+            (Procedure::Lambda(lambda1), Procedure::Lambda(lambda2)) => lambda1 == lambda2,
+            _ => false,
         }
     }
 }

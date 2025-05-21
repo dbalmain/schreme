@@ -1,6 +1,6 @@
 use crate::environment::{EnvError, Environment};
 use crate::source::Span;
-use crate::types::{Node, Procedure, Sexpr};
+use crate::types::{EvaluatedNodeIterator, Lambda, Node, Procedure, Sexpr};
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -111,6 +111,9 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                 // Sexpr::Symbol(ref sym_name) if sym_name == "set!" => { ... }
 
                 // 3e. Special Form: 'lambda' (Implement later)
+                Sexpr::Symbol(sym_name) if sym_name == "lambda" => {
+                    evaluate_lambda(rest.clone(), env, node.span)
+                }
                 // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
 
                 // 3f. Procedure Call (Implement later)
@@ -240,6 +243,103 @@ fn evaluate_define(
     }
 }
 
+fn evaluate_lambda(
+    operands: Node,
+    env: Rc<RefCell<Environment>>,
+    original_span: Span,
+) -> EvalResult {
+    let mut params: Vec<String> = vec![];
+    let mut variadic_param: Option<String> = None;
+    match &*operands.kind.borrow() {
+        Sexpr::Pair(params_node, body_node_list) => {
+            // params_node: Node for (param1 param2 ...) or just param for variadic
+            // body_node_list: Node for ((expr1) (expr2) ...) or (expr1)
+
+            // Validate params_node:
+            // - Must be a list of symbols, or a single symbol (for variadic),
+            //   or a dotted list of symbols.
+            // - For now, start by requiring a proper list of unique symbols.
+            //   e.g., iterate params_node, ensure each element is a Symbol.
+            //   Return SyntaxError if not.
+            // Example (simplified validation - make this more robust):
+            match &*params_node.kind.borrow() {
+                Sexpr::Nil => {} // (lambda () ...) is valid
+                Sexpr::Symbol(param) => {
+                    variadic_param = Some(param.to_string());
+                } // (lambda x ...) variadic is valid
+                Sexpr::Pair(_, _) => {
+                    // Collect parameter names
+                    let mut temp_params = params_node.clone();
+                    loop {
+                        let temp_params_borrow = temp_params.kind.borrow();
+                        match &*temp_params_borrow {
+                            Sexpr::Pair(param, rest) => {
+                                if !matches!(*param.kind.borrow(), Sexpr::Symbol(_)) {
+                                    return Err(EvalError::InvalidArguments(
+                                        "lambda parameters must be symbols".to_string(),
+                                        param.span.clone(),
+                                    ));
+                                }
+                                params.push(param.to_string());
+                                let rest = rest.clone(); // clone here so we can drop temp_params_borrow
+                                drop(temp_params_borrow);
+                                temp_params = rest;
+                            }
+                            Sexpr::Nil => break,
+                            Sexpr::Symbol(param) => {
+                                // Dotted list for variadic
+                                variadic_param = Some(param.to_string());
+                                break;
+                            }
+                            sexpr => {
+                                return Err(EvalError::NotASymbol(
+                                    sexpr.clone(),
+                                    params_node.span.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return Err(EvalError::InvalidArguments(
+                        "lambda parameters must be a list or a symbol".to_string(),
+                        params_node.span.clone(),
+                    ));
+                }
+            }
+
+            // Validate body_node_list:
+            // - Must contain at least one expression.
+            let body: Vec<Node> = body_node_list.clone().into_iter().collect();
+            if body.len() == 0 {
+                return Err(EvalError::InvalidSpecialForm(
+                    "lambda body cannot be empty".to_string(),
+                    body_node_list.span.clone(),
+                ));
+            }
+
+            let lambda_object = Lambda {
+                params,
+                variadic_param,
+                body,             // Store the list of body expressions
+                env: env.clone(), // CAPTURE THE CURRENT ENVIRONMENT! Crucial for lexical scope.
+            };
+
+            Ok(Node {
+                kind: Rc::new(RefCell::new(Sexpr::Procedure(Procedure::Lambda(Rc::new(
+                    lambda_object,
+                ))))),
+                span: original_span, // Span of the (lambda ...) form
+            })
+        }
+        _ => Err(EvalError::InvalidSpecialForm(
+            // e.g. (lambda) or (lambda not-a-list)
+            "lambda: expected (lambda <formals> <body>...)".to_string(),
+            operands.span,
+        )),
+    }
+}
+
 fn evaluate_procedure(
     operator_node: Node,      // The Node from the AST that represents the operator
     operands_list_node: Node, // The Node from the AST representing the list of operands, e.g. kind is Pair(arg1, Pair(arg2, Nil))
@@ -266,14 +366,61 @@ fn evaluate_procedure(
         Procedure::Primitive(func, _) => {
             // Call the Rust function with evaluated args and the original call's span
             func(operands_list_node.into_eval_iter(env), original_call_span)
-        } // Procedure::Lambda(lambda_data) => {
-          //     // - Create a new environment enclosing the lambda's captured env
-          //     // - Bind lambda parameters to evaluated_args in the new env
-          //     // - Evaluate the lambda body in the new env
-          //     // - Handle TCO here eventually
-          //     unimplemented!("Lambda evaluation not yet implemented");
-          // }
+        }
+        Procedure::Lambda(lambda) => apply_lambda(
+            lambda,
+            operands_list_node.into_eval_iter(env.clone()),
+            original_call_span,
+        ),
     }
+}
+
+fn apply_lambda(
+    lambda: Rc<Lambda>,
+    mut args: EvaluatedNodeIterator,
+    original_call_span: Span,
+) -> EvalResult {
+    let env = Environment::new_enclosed(lambda.env.clone());
+    for (i, param) in lambda.params.iter().enumerate() {
+        let Some(node) = args.next() else {
+            return Err(EvalError::InvalidArguments(
+                format!(
+                    "lambda expects {} {} arguments, got {}",
+                    if lambda.variadic_param.is_some() {
+                        "at least"
+                    } else {
+                        "exactly"
+                    },
+                    lambda.params.len(),
+                    i
+                ),
+                original_call_span,
+            ));
+        };
+        env.borrow_mut().define(param.to_string(), node?);
+    }
+    if let Some(param) = &lambda.variadic_param {
+        env.borrow_mut()
+            .define(param.to_string(), args.collect::<Result<Node, _>>()?);
+    } else {
+        if args.next() != None {
+            return Err(EvalError::InvalidArguments(
+                format!(
+                    "lambda expects exactly {} arguments, got more",
+                    lambda.params.len(),
+                ),
+                original_call_span,
+            ));
+        }
+    }
+    let mut result: EvalResult = Ok(Node::new_nil(Span::default()));
+    for expr in lambda.body.iter() {
+        if let Ok(node) = result {
+            env.borrow_mut().define("_".to_string(), node);
+        }
+        result = evaluate(expr.clone(), env.clone());
+    }
+    result
 }
 
 impl Sexpr {
@@ -295,6 +442,7 @@ impl Sexpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ParseError;
     use crate::parser::parse_str; // Use parser to create AST nodes easily
     use crate::source::Span;
 
@@ -307,6 +455,24 @@ mod tests {
                     assert_eq!(
                         *result_node.kind.borrow(),
                         *expected_kind,
+                        "Input: '{}'",
+                        input
+                    )
+                }
+                Err(e) => panic!("Evaluation failed for input '{}': {}", input, e),
+            },
+            Err(e) => panic!("Parsing failed for input '{}': {}", input, e),
+        }
+    }
+
+    fn assert_eval_sexpr(input: &str, expected_sexpr: &str, env: Option<Rc<RefCell<Environment>>>) {
+        let env = env.unwrap_or_else(Environment::new_global_populated);
+        match parse_str(input) {
+            Ok(node) => match evaluate(node, env) {
+                Ok(result_node) => {
+                    assert_eq!(
+                        result_node.to_string(),
+                        *expected_sexpr,
                         "Input: '{}'",
                         input
                     )
@@ -905,6 +1071,405 @@ mod tests {
                 "unbound-var".to_string(),
                 Span::new(10, 21)
             )))
+        );
+    }
+
+    fn assert_is_lambda(node: Node, message: &str) {
+        assert!(
+            matches!(*node.kind.borrow(), Sexpr::Procedure(Procedure::Lambda(_))),
+            "{}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_lambda_creates_procedure() {
+        let env = new_test_env();
+        for (str, message) in [
+            ("(lambda (x) x)", "Lambda did not create a procedure"),
+            ("(lambda () 42)", "Lambda with no params"),
+            ("(lambda (a b c) (+ a b c))", "Lambda with multiple params"),
+            (
+                "(lambda (a b c . d) (+ a b c (apply + d)))",
+                "Lambda with multiple params and variadic param",
+            ),
+            ("(lambda x (apply + x))", "Lambda with only variadic param"),
+            (
+                "(lambda x (apply + x) (apply * x) (apply / x))",
+                "Lambda with with multiple bodies",
+            ),
+            (
+                "(lambda () undefined-var1 undefined-var2)",
+                "Lambda does not evaluate body elements",
+            ),
+        ] {
+            let result_node = eval_str(str, env.clone()).unwrap();
+            assert_is_lambda(result_node, message);
+        }
+    }
+
+    #[test]
+    fn test_lambda_captures_env() {
+        let env = new_test_env();
+        eval_str("(define y 10)", env.clone()).unwrap();
+        let lambda_node = eval_str("(lambda (x) (+ x y))", env.clone()).unwrap(); // y is captured from outer env
+
+        match &*lambda_node.kind.borrow() {
+            Sexpr::Procedure(Procedure::Lambda(lambda_rc)) => {
+                // Check if the captured environment has 'y'
+                // This requires `lambda_rc.env` to be accessible and for Environment to have a `get`
+                // or some way to inspect its bindings for testing.
+                // If Environment::get returns Option<Node>:
+                let result = lambda_rc.env.borrow().get("y", Span::default());
+
+                assert!(result.is_ok(), "Lambda did not capture 'y'");
+                if let Ok(y_val_node) = result {
+                    assert!(
+                        matches!(*y_val_node.kind.borrow(), Sexpr::Number(10.0)),
+                        "Captured 'y' has wrong value"
+                    );
+                }
+            }
+            _ => panic!("Expected lambda procedure"),
+        }
+    }
+
+    // --- Syntax Error Tests for `lambda` form ---
+    #[test]
+    fn test_lambda_syntax_error_no_params_or_body() {
+        let env = new_test_env();
+        let result = eval_str("(lambda)", env);
+        assert!(matches!(result, Err(EvalError::InvalidSpecialForm(_, _))));
+    }
+
+    #[test]
+    fn test_lambda_syntax_error_no_body() {
+        let env = new_test_env();
+        let result = eval_str("(lambda (x))", env);
+        assert!(matches!(result, Err(EvalError::InvalidSpecialForm(_, _))));
+    }
+
+    #[test]
+    fn test_lambda_syntax_error_param_not_symbol_list_number() {
+        let env = new_test_env();
+        let result = eval_str("(lambda 123 x)", env); // params is '123'
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    #[test]
+    fn test_lambda_syntax_error_param_in_list_not_symbol() {
+        let env = new_test_env();
+        let result = eval_str("(lambda (x 123 y) x)", env); // '123' in param list
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    // --- Tests for Lambda Application (Calling the procedure) ---
+
+    #[test]
+    fn test_lambda_application_simple() {
+        assert_eval_kind("((lambda (x) (+ x 5)) 10)", &Sexpr::Number(15.0), None);
+    }
+
+    #[test]
+    fn test_lambda_application_no_params() {
+        assert_eval_kind("((lambda () 42))", &Sexpr::Number(42.0), None);
+    }
+
+    #[test]
+    fn test_lambda_application_multiple_params() {
+        assert_eval_kind("((lambda (a b) (* a b)) 3 7)", &Sexpr::Number(21.0), None);
+    }
+
+    #[test]
+    fn test_lambda_application_closure_simple_capture() {
+        let env = new_test_env();
+        eval_str("(define y 100)", env.clone()).unwrap();
+        assert_eval_kind("((lambda (x) (+ x y)) 5)", &Sexpr::Number(105.0), Some(env));
+    }
+
+    #[test]
+    fn test_lambda_application_make_adder_closure() {
+        let env = new_test_env();
+        eval_str(
+            "(define make-adder (lambda (n) (lambda (x) (+ x n))))",
+            env.clone(),
+        )
+        .unwrap();
+        eval_str("(define add5 (make-adder 5))", env.clone()).unwrap();
+        assert_eval_kind("(add5 10)", &Sexpr::Number(15.0), Some(env.clone()));
+
+        eval_str("(define add10 (make-adder 10))", env.clone()).unwrap();
+        assert_eval_kind("(add10 10)", &Sexpr::Number(20.0), Some(env.clone()));
+
+        assert_eval_kind("(add5 1)", &Sexpr::Number(6.0), Some(env.clone()));
+        assert_eval_kind(
+            "(add10 (add5 (add10 ((make-adder 2) 2))))",
+            &Sexpr::Number(29.0),
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_lambda_shadowing_outer_variable() {
+        let env = new_test_env();
+        eval_str("(define x 10)", env.clone()).unwrap();
+        // This lambda's 'x' parameter shadows the outer 'x'
+        assert_eval_kind(
+            "((lambda (x) (+ x 1)) 5)",
+            &Sexpr::Number(6.0),
+            Some(env.clone()),
+        );
+        // Ensure outer 'x' is unchanged
+        assert_eval_kind("x", &Sexpr::Number(10.0), Some(env.clone()));
+    }
+
+    #[test]
+    fn test_lambda_application_sequential_body_eval() {
+        let env = new_test_env();
+        // The result should be from the last expression in the body
+        assert_eval_kind(
+            "((lambda () (define temp 5) (+ temp 10)))",
+            &Sexpr::Number(15.0),
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_lambda_application_sequential_underscore_eval() {
+        let env = new_test_env();
+        // The result should be from the last expression in the body
+        assert_eval_kind(
+            "((lambda (x y z) (+ x y z) (/ _ 3) (* _ 2)) 1 2 3)",
+            &Sexpr::Number(4.0),
+            Some(env.clone()),
+        );
+    }
+
+    // --- Arity Error Tests for Lambda Application ---
+    #[test]
+    fn test_lambda_application_arity_error_too_few_args() {
+        let env = new_test_env();
+        let result = eval_str("((lambda (x y) (+ x y)) 5)", env);
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    #[test]
+    fn test_lambda_application_arity_error_too_many_args() {
+        let env = new_test_env();
+        let result = eval_str("((lambda (x) x) 5 6)", env);
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    #[test]
+    fn test_lambda_application_arity_error_no_params_given_one() {
+        let env = new_test_env();
+        let result = eval_str("((lambda () 42) 1)", env);
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    // --- Tests for more complex scenarios (recursion, higher-order) ---
+    #[test]
+    fn test_lambda_recursion_factorial() {
+        let env = new_test_env();
+        eval_str(
+            "(define factorial (lambda (n) (if (= n 0) 1 (* n (factorial (- n 1))))))",
+            env.clone(),
+        )
+        .unwrap();
+        assert_eval_kind("(factorial 5)", &Sexpr::Number(120.0), Some(env.clone()));
+        assert_eval_kind(
+            "(factorial 10)",
+            &Sexpr::Number(3628800.0),
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_lambda_higher_order_map_simple() {
+        let env = new_test_env();
+        // Define a simple list for map to operate on (assuming `cons` and `list` or `quote` work)
+        eval_str("(define my-list '(1 2 3 4))", env.clone()).unwrap();
+        eval_str("(define square (lambda (x) (* x x)))", env.clone()).unwrap();
+
+        eval_str(
+            "(define map
+               (lambda (proc lst)
+                 (if (null? lst) ; Assuming null? primitive
+                     '()
+                     (cons (proc (car lst)) (map proc (cdr lst))))))", // Assuming car/cdr primitives
+            env.clone(),
+        )
+        .unwrap();
+        eval_str(
+            "(define foldl
+               (lambda (proc acc lst)
+                 (if (null? lst) ; Assuming null? primitive
+                     acc
+                     (foldl proc (proc acc (car lst)) (cdr lst)))))", // Assuming car/cdr primitives
+            env.clone(),
+        )
+        .unwrap();
+
+        eval_str("(define apply-twice (lambda (f x) (f (f x))))", env.clone()).unwrap();
+        assert_eval_kind(
+            "(apply-twice square 2)",
+            &Sexpr::Number(16.0),
+            Some(env.clone()),
+        );
+
+        assert_eval_kind(
+            "(foldl + 0 my-list)",
+            &Sexpr::Number(10.0),
+            Some(env.clone()),
+        );
+
+        assert_eval_kind(
+            "(foldl + 0 (map square my-list))",
+            &Sexpr::Number(30.0),
+            Some(env.clone()),
+        );
+        assert_eval_kind(
+            "(foldl + 0 (map (lambda (x) (apply-twice square x)) my-list))",
+            &Sexpr::Number(354.0),
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_lambda_variadic_no_args() {
+        assert_eval_kind("((lambda x x))", &Sexpr::Nil, None);
+    }
+
+    #[test]
+    fn test_lambda_variadic_one_arg() {
+        assert_eval_sexpr("((lambda x x) 10)", "(10)", None);
+    }
+
+    #[test]
+    fn test_lambda_variadic_multiple_args() {
+        assert_eval_sexpr("((lambda x x) 1 2 3.0)", "(1 2 3)", None);
+    }
+
+    #[test]
+    fn test_lambda_variadic_args_are_evaluated() {
+        assert_eval_sexpr("((lambda x x) (+ 1 2) (- 5 1))", "(3 4)", None);
+    }
+
+    #[test]
+    fn test_lambda_variadic_accessing_args() {
+        let env = new_test_env();
+        eval_str(
+            "(define my-var-func (lambda params (car params)))",
+            env.clone(),
+        )
+        .unwrap();
+        assert_eval_sexpr("(my-var-func 100 200 300)", "100", Some(env));
+    }
+
+    #[test]
+    fn test_lambda_variadic_define_and_call() {
+        let env = new_test_env();
+        eval_str("(define collect (lambda x x))", env.clone()).unwrap();
+        assert_eval_sexpr("(collect 'a 'b 'c)", "(a b c)", Some(env));
+    }
+
+    // --- Tests for Dotted-List Parameters `(lambda (p1 p2 . rest) ...)` ---
+
+    #[test]
+    fn test_lambda_dotted_exact_fixed_args_no_rest() {
+        assert_eval_sexpr(
+            "((lambda (p1 p2 . r) (list p1 p2 r)) 10 20)",
+            "(10 20 ())",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_lambda_dotted_one_fixed_one_rest_arg() {
+        assert_eval_sexpr("((lambda (p1 . r) (list p1 r)) 10 20)", "(10 (20))", None);
+    }
+
+    #[test]
+    fn test_lambda_dotted_one_fixed_multiple_rest_args() {
+        assert_eval_sexpr(
+            "((lambda (p1 . r) (list p1 r)) 10 20 30 40)",
+            "(10 (20 30 40))",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_lambda_dotted_multiple_fixed_multiple_rest_args() {
+        assert_eval_sexpr(
+            "((lambda (p1 p2 p3 . r) (list p1 p2 p3 r)) 1 2 3 4 5 6)",
+            "(1 2 3 (4 5 6))",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_lambda_dotted_args_are_evaluated() {
+        assert_eval_sexpr(
+            "((lambda (a . r) (list a r)) (+ 1 2) (- 10 1) (* 2 3))",
+            "(3 (9 6))",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_lambda_dotted_define_and_call() {
+        let env = new_test_env();
+        eval_str(
+            "(define my-dot-func (lambda (first . rest) (list first (null? rest))))",
+            env.clone(),
+        )
+        .unwrap();
+        assert_eval_sexpr("(my-dot-func 1)", "(1 #t)", Some(env.clone()));
+        assert_eval_sexpr("(my-dot-func 1 2 3)", "(1 #f)", Some(env.clone()));
+    }
+
+    // --- Arity Error Tests for Dotted-List Parameters ---
+    #[test]
+    fn test_lambda_dotted_arity_error_too_few_for_fixed() {
+        let env = new_test_env();
+        // (lambda (p1 p2 . r) ...) requires at least 2 arguments
+        let result = eval_str("((lambda (p1 p2 . r) r) 5)", env);
+        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+    }
+
+    // --- Syntax Error Tests for Variadic/Dotted Parameter Definitions ---
+    #[test]
+    fn test_lambda_syntax_error_dotted_misplaced_dot() {
+        // (lambda (. x) x) is invalid Scheme, dot must follow a symbol
+        let result1 = parse_str("(lambda (. x) x)");
+        assert!(matches!(result1, Err(ParseError::UnexpectedToken { .. })));
+
+        let result2 = parse_str("(lambda (a . b . c) a)");
+        assert!(matches!(result2, Err(ParseError::UnexpectedToken { .. })));
+    }
+
+    #[test]
+    fn test_lambda_syntax_error_dotted_symbol_after_dot_not_symbol() {
+        let env = new_test_env();
+        // (lambda (a . 10) x) is invalid, item after dot must be a symbol
+        let result = eval_str("(lambda (a . 10) x)", env);
+        assert!(
+            matches!(result, Err(EvalError::NotASymbol(_, _))),
+            "Syntax error: non-symbol after dot"
+        );
+    }
+
+    #[test]
+    fn test_lambda_syntax_error_variadic_params_not_single_symbol() {
+        let env = new_test_env();
+        // (lambda (a b) body) -> params is a list
+        // (lambda rest body) -> params is a symbol
+        // (lambda (a . b) body) -> params is a dotted list
+        // (lambda '(a b) body) -> params is `(quote (a b))`, not a list of symbols directly. This should be an error.
+        let result = eval_str("(lambda '(a b) x)", env);
+        assert!(
+            matches!(result, Err(EvalError::InvalidArguments(_, _))),
+            "Syntax error: variadic parameter list specified as a quoted list"
         );
     }
 }

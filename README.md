@@ -46,9 +46,10 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Implement `quote` special form.
     * [x] Implement `if` special form.
     * [ ] Implement `begin` special form.
-    * [ ] Implement `define` special form (global/local).
+    * [x] Implement `define` special form (global/local).
+    * [x] Implement `lambda` special form
     * [ ] Implement `set!` special form.
-    * [ ] Implement basic procedure calls (primitives first).
+    * [x] Implement basic procedure calls (primitives first).
     * [ ] Implement robust error handling (`EvalError`).
 * [ ] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
