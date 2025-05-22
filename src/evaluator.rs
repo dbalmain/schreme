@@ -208,38 +208,60 @@ fn evaluate_define(
     env: Rc<RefCell<Environment>>,
     original_span: Span,
 ) -> EvalResult {
-    let operands: Vec<Node> = operands.into_iter().collect();
-
-    if operands.len() == 0 {
-        return invalid_special_form(
-            "define: No arguments provided, expected (define name [value])",
+    match &*operands.kind.borrow() {
+        Sexpr::Symbol(name) => {
+            let value = Node::new_nil(original_span);
+            env.borrow_mut().define(name.clone(), value.clone());
+            Ok(value)
+        }
+        Sexpr::Pair(name_node, definition) => match &*name_node.kind.borrow() {
+            Sexpr::Symbol(name) => {
+                let value = match &*definition.kind.borrow() {
+                    Sexpr::Pair(value_node, should_be_nil) => {
+                        if Sexpr::Nil == *should_be_nil.kind.borrow() {
+                            evaluate(value_node.clone(), env.clone())?
+                        } else {
+                            return invalid_special_form(
+                                "define: Too many arguments provided, expected (define name [value])",
+                                original_span,
+                            );
+                        }
+                    }
+                    _ => evaluate(definition.clone(), env.clone())?,
+                };
+                env.borrow_mut().define(name.clone(), value.clone());
+                Ok(value)
+            }
+            Sexpr::Pair(name_node, args) => {
+                if let Sexpr::Symbol(name) = &*name_node.kind.borrow() {
+                    let span = args.span.merge(&definition.span);
+                    let lambda = evaluate_lambda(
+                        Node::new_pair(args.clone(), definition.clone(), span),
+                        env.clone(),
+                        original_span,
+                    )?;
+                    env.borrow_mut().define(name.clone(), lambda.clone());
+                    Ok(lambda)
+                } else {
+                    Err(EvalError::NotASymbol(
+                        name_node.kind.borrow().clone(),
+                        name_node.span,
+                    ))
+                }
+            }
+            _ => Err(EvalError::NotASymbol(
+                name_node.kind.borrow().clone(),
+                name_node.span,
+            )),
+        },
+        Sexpr::Nil => invalid_special_form(
+            "define: No arguments provided, expected (define name [value]) or (define (name ...args) expr ...expr)",
             original_span,
-        );
-    }
-
-    if operands.len() > 2 {
-        return invalid_special_form(
-            &format!(
-                "define: Too many arguments [{}], expected (define name [value])",
-                operands.len()
-            ),
-            original_span,
-        );
-    }
-
-    if let Sexpr::Symbol(name) = &*operands[0].kind.borrow() {
-        let value = if operands.len() == 2 {
-            evaluate(operands[1].clone(), env.clone())?
-        } else {
-            Node::new_nil(original_span)
-        };
-        env.borrow_mut().define(name.clone(), value.clone());
-        Ok(value)
-    } else {
-        return Err(EvalError::NotASymbol(
-            operands[0].kind.borrow().clone(),
-            operands[0].span,
-        ));
+        ),
+        _ => Err(EvalError::NotASymbol(
+            operands.kind.borrow().clone(),
+            operands.span,
+        )),
     }
 }
 
@@ -767,7 +789,7 @@ mod tests {
         Node::new_number(n, Span::new(start, end))
     }
 
-    fn node_symbol(symbol: &str, start: usize, end: usize) -> Node {
+    fn _node_symbol(symbol: &str, start: usize, end: usize) -> Node {
         Node::new_symbol(symbol.to_string(), Span::new(start, end))
     }
 
@@ -1042,21 +1064,6 @@ mod tests {
         assert_eval_error(
             "(define 123 456)",
             &EvalError::NotASymbol(Sexpr::Number(123.0), Span::default()),
-            None,
-        );
-    }
-
-    #[test]
-    fn test_define_variable_not_a_symbol_list() {
-        assert_eval_error(
-            "(define (a b) 456)",
-            &EvalError::NotASymbol(
-                node_list(&[node_symbol("a", 9, 10), node_symbol("b", 11, 12)], 8, 13)
-                    .kind
-                    .borrow()
-                    .clone(),
-                Span::default(),
-            ),
             None,
         );
     }
@@ -1471,5 +1478,33 @@ mod tests {
             matches!(result, Err(EvalError::InvalidArguments(_, _))),
             "Syntax error: variadic parameter list specified as a quoted list"
         );
+    }
+
+    #[test]
+    fn test_define_lambda_sugar_no_args() {
+        let env = new_test_env();
+        eval_str("(define (my-func) 3)", env.clone()).unwrap();
+        assert_eval_kind("(my-func)", &Sexpr::Number(3.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_lambda_sugar_one_arg() {
+        let env = new_test_env();
+        eval_str("(define (add3 x) (+ 3 x))", env.clone()).unwrap();
+        assert_eval_kind("(add3 3)", &Sexpr::Number(6.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_lambda_sugar_multiple_args() {
+        let env = new_test_env();
+        eval_str("(define (add-3 a b c) (+ a b c))", env.clone()).unwrap();
+        assert_eval_kind("(add-3 1 2 3)", &Sexpr::Number(6.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_lambda_sugar_one_variadic_arg() {
+        let env = new_test_env();
+        eval_str("(define (collect . x) x)", env.clone()).unwrap();
+        assert_eval_sexpr("(collect 'a 'b 'c)", "(a b c)", Some(env));
     }
 }
