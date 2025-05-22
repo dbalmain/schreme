@@ -93,6 +93,34 @@ impl Node {
     pub fn into_iter(self: Node) -> NodeIterator {
         NodeIterator { current_node: self }
     }
+
+    pub fn is_list(self: &Node) -> bool {
+        match &*self.kind.borrow() {
+            Sexpr::Nil => true,
+            Sexpr::Pair(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn undotted_pair(self: &Node) -> Option<(Node, Node)> {
+        match &*self.kind.borrow() {
+            Sexpr::Pair(first, rest) => match &*rest.kind.borrow() {
+                Sexpr::Pair(second, must_be_nil) => match &*must_be_nil.kind.borrow() {
+                    Sexpr::Nil => Some((first.clone(), second.clone())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn symbol(self: &Node) -> Option<String> {
+        match &*self.kind.borrow() {
+            Sexpr::Symbol(symbol) => Some(symbol.clone()),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Node {

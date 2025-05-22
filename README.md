@@ -45,9 +45,12 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Evaluate symbols (variable lookup in environment).
     * [x] Implement `quote` special form.
     * [x] Implement `if` special form.
-    * [ ] Implement `begin` special form.
+    * [x] Implement `begin` special form.
     * [x] Implement `define` special form (global/local).
     * [x] Implement `lambda` special form
+    * [x] Implement `let` special form
+    * [ ] Implement `let*` special form
+    * [ ] Implement `letrec` special form
     * [ ] Implement `set!` special form.
     * [x] Implement basic procedure calls (primitives first).
     * [ ] Implement robust error handling (`EvalError`).

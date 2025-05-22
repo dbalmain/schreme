@@ -2,6 +2,7 @@ use crate::environment::{EnvError, Environment};
 use crate::source::Span;
 use crate::types::{EvaluatedNodeIterator, Lambda, Node, Procedure, Sexpr};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -114,7 +115,14 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                 Sexpr::Symbol(sym_name) if sym_name == "lambda" => {
                     evaluate_lambda(rest.clone(), env, node.span)
                 }
-                // Sexpr::Symbol(ref sym_name) if sym_name == "lambda" => { ... }
+
+                Sexpr::Symbol(sym_name) if sym_name == "begin" => {
+                    evaluate_body(rest.clone().into_iter(), env)
+                }
+
+                Sexpr::Symbol(sym_name) if sym_name == "let" => {
+                    evaluate_let(rest.clone(), env, node.span)
+                }
 
                 // 3f. Procedure Call (Implement later)
                 _ => evaluate_procedure(first.clone(), rest.clone(), env, node.span),
@@ -241,7 +249,7 @@ fn evaluate_define(
                         original_span,
                     )?;
                     env.borrow_mut().define(name.clone(), lambda.clone());
-                    Ok(lambda)
+                    Ok(name_node.clone())
                 } else {
                     Err(EvalError::NotASymbol(
                         name_node.kind.borrow().clone(),
@@ -297,8 +305,8 @@ fn evaluate_lambda(
                         match &*temp_params_borrow {
                             Sexpr::Pair(param, rest) => {
                                 if !matches!(*param.kind.borrow(), Sexpr::Symbol(_)) {
-                                    return Err(EvalError::InvalidArguments(
-                                        "lambda parameters must be symbols".to_string(),
+                                    return Err(EvalError::NotASymbol(
+                                        param.kind.borrow().clone(),
                                         param.span.clone(),
                                     ));
                                 }
@@ -397,6 +405,56 @@ fn evaluate_procedure(
     }
 }
 
+fn evaluate_let(operands: Node, env: Rc<RefCell<Environment>>, original_span: Span) -> EvalResult {
+    match &*operands.kind.borrow() {
+        Sexpr::Pair(definitions_node, body_node) => {
+            if !definitions_node.is_list() {
+                return Err(EvalError::InvalidSpecialForm(
+                    "let: expected (let (...(y <val>)) ...<expr>)".to_string(),
+                    definitions_node.span.clone(),
+                ));
+            }
+            let mut variables: HashMap<String, Node> = HashMap::new();
+            for definition in definitions_node.clone().into_iter() {
+                if let Some((name_node, value_node)) = definition.undotted_pair() {
+                    if let Some(name) = name_node.symbol() {
+                        if variables.contains_key(&name) {
+                            return Err(EvalError::InvalidSpecialForm(
+                                "let: duplicate identifier".to_string(),
+                                definitions_node.span.clone(),
+                            ));
+                        }
+                        variables.insert(name, evaluate(value_node.clone(), env.clone())?);
+                    } else {
+                        return Err(EvalError::NotASymbol(
+                            name_node.kind.borrow().clone(),
+                            definition.span.clone(),
+                        ));
+                    }
+                } else {
+                    return Err(EvalError::InvalidSpecialForm(
+                        "let: binding is not a pair (let (...(y <val>)) ...<expr>)".to_string(),
+                        definition.span.clone(),
+                    ));
+                }
+            }
+            let env = Environment::new_enclosed(env.clone());
+            {
+                let mut env = env.borrow_mut();
+                for (key, value) in variables.into_iter() {
+                    env.define(key, value);
+                }
+            }
+            evaluate_body(body_node.clone().into_iter(), env)
+        }
+        _ => Err(EvalError::InvalidSpecialForm(
+            // e.g. (lambda) or (lambda not-a-list)
+            "let: expected (let (...(y <val>)) ...<expr>)".to_string(),
+            original_span,
+        )),
+    }
+}
+
 fn apply_lambda(
     lambda: Rc<Lambda>,
     mut args: EvaluatedNodeIterator,
@@ -435,10 +493,16 @@ fn apply_lambda(
             ));
         }
     }
+    evaluate_body(lambda.body.clone().into_iter(), env)
+}
+
+fn evaluate_body<T: Iterator<Item = Node>>(exprs: T, env: Rc<RefCell<Environment>>) -> EvalResult {
     let mut result: EvalResult = Ok(Node::new_nil(Span::default()));
-    for expr in lambda.body.iter() {
+    for expr in exprs {
         if let Ok(node) = result {
             env.borrow_mut().define("_".to_string(), node);
+        } else {
+            return result;
         }
         result = evaluate(expr.clone(), env.clone());
     }
@@ -485,6 +549,10 @@ mod tests {
             },
             Err(e) => panic!("Parsing failed for input '{}': {}", input, e),
         }
+    }
+
+    fn assert_eval_number(input: &str, number: f64, env: Option<Rc<RefCell<Environment>>>) {
+        assert_eval_kind(input, &Sexpr::Number(number), env);
     }
 
     fn assert_eval_sexpr(input: &str, expected_sexpr: &str, env: Option<Rc<RefCell<Environment>>>) {
@@ -1167,7 +1235,7 @@ mod tests {
     fn test_lambda_syntax_error_param_in_list_not_symbol() {
         let env = new_test_env();
         let result = eval_str("(lambda (x 123 y) x)", env); // '123' in param list
-        assert!(matches!(result, Err(EvalError::InvalidArguments(_, _))));
+        assert!(matches!(result, Err(EvalError::NotASymbol(_, _))));
     }
 
     // --- Tests for Lambda Application (Calling the procedure) ---
@@ -1475,36 +1543,423 @@ mod tests {
         // (lambda '(a b) body) -> params is `(quote (a b))`, not a list of symbols directly. This should be an error.
         let result = eval_str("(lambda '(a b) x)", env);
         assert!(
-            matches!(result, Err(EvalError::InvalidArguments(_, _))),
+            matches!(result, Err(EvalError::NotASymbol(_, _))),
             "Syntax error: variadic parameter list specified as a quoted list"
         );
     }
 
     #[test]
-    fn test_define_lambda_sugar_no_args() {
+    fn test_define_func_no_args() {
         let env = new_test_env();
         eval_str("(define (my-func) 3)", env.clone()).unwrap();
         assert_eval_kind("(my-func)", &Sexpr::Number(3.0), Some(env));
     }
 
     #[test]
-    fn test_define_lambda_sugar_one_arg() {
+    fn test_define_func_one_arg() {
         let env = new_test_env();
         eval_str("(define (add3 x) (+ 3 x))", env.clone()).unwrap();
         assert_eval_kind("(add3 3)", &Sexpr::Number(6.0), Some(env));
     }
 
     #[test]
-    fn test_define_lambda_sugar_multiple_args() {
+    fn test_define_func_multiple_args() {
         let env = new_test_env();
         eval_str("(define (add-3 a b c) (+ a b c))", env.clone()).unwrap();
         assert_eval_kind("(add-3 1 2 3)", &Sexpr::Number(6.0), Some(env));
     }
 
     #[test]
-    fn test_define_lambda_sugar_one_variadic_arg() {
+    fn test_define_func_one_variadic_arg() {
         let env = new_test_env();
         eval_str("(define (collect . x) x)", env.clone()).unwrap();
         assert_eval_sexpr("(collect 'a 'b 'c)", "(a b c)", Some(env));
+    }
+
+    #[test]
+    fn test_define_func_multiple_body_expressions() {
+        let env = new_test_env();
+        // The define inside the function body creates a local binding for that call
+        eval_str(
+            "(define (complex-body x) (define y (+ x 5)) (* y 2))",
+            env.clone(),
+        )
+        .unwrap();
+        assert_eval_kind("(complex-body 10)", &Sexpr::Number(30.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_func_closure_capture() {
+        let env = new_test_env();
+        eval_str("(define n 100)", env.clone()).unwrap();
+        eval_str("(define (adder-val x) (+ x n))", env.clone()).unwrap(); // n is captured
+        assert_eval_kind("(adder-val 5)", &Sexpr::Number(105.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_func_recursion() {
+        let env = new_test_env();
+        eval_str(
+            "(define (factorial n) (if (= n 0) 1 (* n (factorial (- n 1)))))",
+            env.clone(),
+        )
+        .unwrap();
+        assert_eval_kind("(factorial 5)", &Sexpr::Number(120.0), Some(env));
+    }
+
+    // --- Tests for Variadic and Dotted Parameters with Function Define Sugar ---
+
+    #[test]
+    fn test_define_func_variadic_params() {
+        let env = new_test_env();
+        eval_str(
+            "(define (fold proc acc lst)
+                 (if (null? lst) ; Assuming null? primitive
+                     acc
+                     (fold proc (proc acc (car lst)) (cdr lst))))", // Assuming car/cdr primitives
+            env.clone(),
+        )
+        .unwrap();
+
+        eval_str("(define (sum-all . nums) (fold + 0 nums))", env.clone()).unwrap();
+        assert_eval_kind("(sum-all)", &Sexpr::Number(0.0), Some(env.clone()));
+        assert_eval_kind("(sum-all 10)", &Sexpr::Number(10.0), Some(env.clone()));
+        assert_eval_kind("(sum-all 1 2 3 4)", &Sexpr::Number(10.0), Some(env));
+    }
+
+    #[test]
+    fn test_define_func_dotted_params() {
+        let env = new_test_env();
+        eval_str(
+            "(define (process first . rest) (list first (null? rest)))",
+            env.clone(),
+        )
+        .unwrap();
+
+        assert_eval_sexpr("(process 'a)", "(a #t)", Some(env.clone()));
+        assert_eval_sexpr("(process 'x 'y 'z)", "(x #f)", Some(env));
+    }
+
+    // --- Error Cases for `(define (func ...) ...)` ---
+
+    #[test]
+    fn test_define_func_syntax_error_param_not_symbol() {
+        let env = new_test_env();
+        let result = eval_str("(define (my-func x 123 y) (+ x y))", env.clone());
+        println!("{:?}", result);
+        assert!(
+            matches!(result, Err(EvalError::NotASymbol(_, _))),
+            "Parameters in function definition must be symbols"
+        );
+    }
+
+    #[test]
+    fn test_define_func_syntax_error_no_body() {
+        let env = new_test_env();
+        let result = eval_str("(define (my-func x))", env.clone());
+        assert!(
+            matches!(result, Err(EvalError::InvalidSpecialForm(_, _))), // "lambda body cannot be empty" or similar
+            "Function definition requires a body"
+        );
+    }
+
+    #[test]
+    fn test_define_func_syntax_error_empty_target_list() {
+        let env = new_test_env();
+        // (define () 1) -> "()" is not a valid (<name> <params...>)
+        let result = eval_str("(define () 1)", env.clone());
+        assert!(
+            matches!(result, Err(EvalError::NotASymbol(_, _))),
+            "Function definition target () is invalid"
+        );
+    }
+
+    #[test]
+    fn test_define_func_syntax_error_dotted_param_misplaced_dot() {
+        let result = parse_str("(define (my-func a . b . c) x)");
+        assert!(matches!(result, Err(ParseError::UnexpectedToken { .. })));
+    }
+
+    #[test]
+    fn test_define_func_return_value() {
+        // Same as variable define: R7RS says "unspecified".
+        // Many interpreters return the function name symbol, or an 'ok symbol.
+        let env = new_test_env();
+        let result_node = eval_str("(define (id x) x)", env.clone()).unwrap();
+
+        // Example: If it returns the function name symbol:
+        match &*result_node.kind.borrow() {
+            Sexpr::Symbol(s) => assert_eq!(s, "id"),
+            _ => panic!(
+                "Expected define func to return the func name symbol, got {:?}",
+                result_node
+            ),
+        }
+        // Or adapt this assertion based on your chosen return value for define.
+    }
+
+    #[test]
+    fn test_simple_begin_block() {
+        assert_eval_sexpr(
+            "(begin
+                (define (add x y) (+ x y))
+                (define a (add 5 6))
+                (define b (* 5 6))
+                (list a b 'c))",
+            "(11 30 c)",
+            None,
+        );
+    }
+
+    #[test]
+    fn test_begin_empty() {
+        let env = new_test_env();
+        // R7RS: "If there are no expressions in the sequence, begin returns an unspecified value."
+        // What does your implementation return? Nil? A special #<unspecified> object?
+        let result = eval_str("(begin)", env).unwrap();
+        // Assuming you return Nil for an empty begin, like many implementations.
+        // Adjust if you have a specific "unspecified" value/node.
+        match &*result.kind.borrow() {
+            Sexpr::Nil => { /* Ok */ }
+            // Or Sexpr::Unspecified => { /* Ok */ },
+            other => panic!("(begin) should return Nil or Unspecified, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_begin_single_expression() {
+        assert_eval_number("(begin (+ 10 5))", 15.0, None);
+    }
+
+    #[test]
+    fn test_begin_multiple_expressions_side_effects() {
+        let env = new_test_env();
+        eval_str("(define x 0)", env.clone()).unwrap(); // Initialize x
+
+        // Expected sequence:
+        // 1. x becomes 10
+        // 2. y becomes (10 + 5) = 15
+        // 3. result is (15 * 2) = 30
+        assert_eval_number(
+            "(begin (define x 10) (define y (+ x 5)) (* y 2))",
+            30.0,
+            Some(env.clone()),
+        );
+
+        // Check side effects in the environment
+        assert_eval_number("x", 10.0, Some(env.clone()));
+
+        assert_eval_number("y", 15.0, Some(env));
+    }
+
+    #[test]
+    fn test_begin_nested() {
+        let env = new_test_env();
+        eval_str("(define outer-x 100)", env.clone()).unwrap();
+        assert_eval_number(
+            "(begin
+               (define outer-x 1)
+               (begin
+                 (define outer-x 2)
+                 (+ outer-x 5))
+               (+ outer-x 10))",
+            12.0,
+            Some(env.clone()),
+        );
+        assert_eval_number("outer-x", 2.0, Some(env));
+    }
+
+    #[test]
+    fn test_begin_error_in_middle_expression() {
+        let env = new_test_env();
+        eval_str("(define z 0)", env.clone()).unwrap();
+        let result = eval_str(
+            "(begin (define z 5) (+ z non-existent-var) (define z 10))",
+            env.clone(),
+        );
+
+        println!("{:?}", result);
+        assert!(
+            matches!(
+                result,
+                Err(EvalError::EnvError(EnvError::UnboundVariable(name, _))) if name == "non-existent-var"
+            ),
+            "Error in middle of begin should propagate"
+        );
+
+        assert_eval_number("z", 5.0, Some(env));
+    }
+
+    #[test]
+    fn test_let_simple_binding() {
+        assert_eval_number("(let ((x 10)) x)", 10.0, None);
+    }
+
+    #[test]
+    fn test_let_multiple_bindings() {
+        assert_eval_number("(let ((x 5) (y 20)) (+ x y))", 25.0, None);
+    }
+
+    #[test]
+    fn test_let_binding_expressions_evaluated_in_outer_scope() {
+        let env = new_test_env();
+        eval_str("(define outer-val 100)", env.clone()).unwrap();
+        // The 'outer-val' in (y (+ x outer-val)) should refer to the one from define.
+        // The 'x' in (y (+ x outer-val)) refers to the 'x' from the *same* let binding group.
+        // This is a key property of `let` vs `let*`: all value expressions are evaluated *before* any bindings are made.
+        let result = eval_str("(let ((x 10) (y (+ x outer-val))) y)", env.clone());
+        // If `let` desugars to ((lambda (x y) y) 10 (+ x outer-val)),
+        // then `(+ x outer-val)` is evaluated in the *outer* scope where `x` is not yet bound.
+        // This should cause an error for `x`. This is standard `let` behavior.
+        assert!(
+            matches!(result.clone(), Err(EvalError::EnvError(EnvError::UnboundVariable(name, _))) if name == "x"),
+            "Value expressions in let are evaluated in outer scope; 'x' should not be visible to 'y's value expr. Error was: {:?}",
+            result.err()
+        );
+
+        // To make the above work as one might intuitively expect, you'd need let* or nested lets:
+        // (let ((x 10)) (let ((y (+ x outer-val))) y))
+        assert_eval_number(
+            "(let ((x 10)) (let ((y (+ x outer-val))) y))",
+            110.0,
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_let_value_expressions_order_of_eval() {
+        // R7RS: "It is an error for a <variable> to appear more than once in the list of variables
+        // being bound. The <init>s are evaluated in the outer environment (in some unspecified order)"
+        // For testing, we can see if side effects from one init are visible to another IF your impl
+        // desugars to ((lambda (vars...) body) init-exprs...) where init-exprs are eval'd sequentially by
+        // your argument evaluation logic.
+        let env = new_test_env();
+        eval_str("(define a 0)", env.clone()).unwrap();
+        // If init exprs are evaluated left-to-right by your lambda arg eval:
+        // 1. (begin (define a 10) a) -> x bound to 10, global 'a' becomes 10
+        // 2. y bound to global 'a' (which is now 10)
+        // Then (+ 10 10) -> 20
+        // If evaluated in some other order, or truly "outer" before any define, y would be 0.
+        // Most desugaring to lambda implies left-to-right eval of init expressions.
+        assert_eval_number(
+            "(let ((x (begin (define a 10) a)) (y a)) (+ x y))",
+            20.0,
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_let_no_bindings() {
+        // (let () <body>) is like ((lambda () <body>))
+        assert_eval_number("(let () 123)", 123.0, None);
+    }
+
+    #[test]
+    fn test_let_multiple_body_expressions() {
+        // Inside let: x=1. Then (define y (+ 1 2)) -> y=3 (local to let's new scope).
+        // Then (* 3 1) -> 3.
+        assert_eval_number("(let ((x 1)) (define y (+ x 2)) (* y x))", 3.0, None);
+    }
+
+    #[test]
+    fn test_let_shadowing_outer_variable() {
+        let env = new_test_env();
+        eval_str("(define x 100)", env.clone()).unwrap();
+        assert_eval_number("(let ((x 10)) (+ x 5))", 15.0, Some(env.clone())); // Inner x is 10
+
+        // Ensure outer x is unchanged
+        assert_eval_number("x", 100.0, Some(env));
+    }
+
+    #[test]
+    fn test_let_empty_body() {
+        let env = new_test_env();
+        // (let ((x 1)) ) -> result is unspecified (like an empty begin or lambda body)
+        let result = eval_str("(let ((x 1)))", env).unwrap();
+        match &*result.kind.borrow() {
+            // Assuming Nil for unspecified
+            Sexpr::Nil => { /* Ok */ }
+            other => panic!(
+                "let with empty body should return Nil/Unspecified, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // --- Error cases for `let` ---
+    #[test]
+    fn test_let_syntax_error_no_bindings_list() {
+        let env = new_test_env();
+        let result = eval_str("(let x x)", env); // Bindings part 'x' is not a list
+        assert!(
+            matches!(result, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Let bindings must be a list"
+        );
+    }
+
+    #[test]
+    fn test_let_syntax_error_binding_not_a_pair() {
+        let env = new_test_env();
+        let result = eval_str("(let (x) x)", env.clone()); // Binding 'x' is not (var expr)
+        assert!(
+            matches!(result, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Let binding 'x' is not a pair"
+        );
+
+        let result2 = eval_str("(let ((x 1) y (z 3)) y)", env); // Binding 'y' is not (var expr)
+        assert!(
+            matches!(result2, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Let binding 'y' is not a pair"
+        );
+    }
+
+    #[test]
+    fn test_let_syntax_error_binding_var_not_symbol() {
+        let env = new_test_env();
+        let result = eval_str("(let ((123 1)) 123)", env); // Var '123' is not a symbol
+        assert!(
+            matches!(result, Err(EvalError::NotASymbol(symbol, _)) if symbol == Sexpr::Number(123.0)),
+            "Let binding variable must be a symbol"
+        );
+    }
+
+    #[test]
+    fn test_let_syntax_error_binding_pair_wrong_length() {
+        let env = new_test_env();
+        let result1 = eval_str("(let ((x)) x)", env.clone()); // (x) not (x expr)
+        assert!(
+            matches!(result1, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Let binding (x) wrong length"
+        );
+
+        let result2 = eval_str("(let ((x 1 2)) x)", env); // (x 1 2) not (x expr)
+        assert!(
+            matches!(result2, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Let binding (x 1 2) wrong length"
+        );
+    }
+
+    #[test]
+    fn test_let_error_in_value_expression() {
+        let env = new_test_env();
+        let result = eval_str("(let ((x (+ 1 non-existent))) x)", env);
+        assert!(
+            matches!(result, Err(EvalError::EnvError(EnvError::UnboundVariable(name, _))) if name == "non-existent"),
+            "Error in let value expression should propagate"
+        );
+    }
+
+    #[test]
+    fn test_let_duplicate_variable_in_bindings() {
+        let env = new_test_env();
+        // R7RS: "It is an error for a <variable> to appear more than once in the list of variables being bound."
+        let result = eval_str("(let ((x 1) (x 2)) x)", env);
+        // This error might be caught during the parsing of the `let` form (before desugaring)
+        // or by the `lambda` form if the desugared `(lambda (x x) ...)` has duplicate param check.
+        assert!(
+            matches!(result, Err(EvalError::InvalidSpecialForm(_, _))),
+            "Duplicate variable in let bindings should be an error. Got: {:?}",
+            result.err()
+        );
     }
 }
