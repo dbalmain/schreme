@@ -114,15 +114,14 @@ impl Environment {
         }
     }
 
-    /*
     /// Sets the value of an *existing* variable in the environment chain.
     /// Searches outward from the current environment and updates the first frame
     /// where the variable is found. Errors if the variable is not defined.
     /// `set_span` is the location of the `set!` expression.
     pub fn set(&mut self, name: &str, value_node: Node, set_span: Span) -> Result<(), EnvError> {
-        if self.bindings.contains_key(name) {
+        if let Some(value_mut) = self.bindings.get_mut(name) {
             // Variable exists in the current frame, update it here
-            self.bindings.insert(name.to_string(), value_node);
+            *value_mut = value_node;
             Ok(())
         } else {
             // Try setting in the outer environment
@@ -138,8 +137,6 @@ impl Environment {
             }
         }
     }
-    */
-    // We will uncomment and refine `set` later when implementing the `set!` special form.
 
     /// Helper to add a primitive procedure to the environment.
     fn add_primitive(&mut self, name: &str, func: PrimitiveFunc) {
