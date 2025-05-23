@@ -102,6 +102,7 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                     "begin" => evaluate_body(rest.clone().into_iter(), env),
                     "let" => evaluate_let(rest, env, node.span),
                     "letrec" => evaluate_letrec(rest, env, node.span),
+                    "let*" => evaluate_letstar(rest, env, node.span),
                     _ => evaluate_procedure(first, rest, env, node.span),
                 },
 
@@ -502,6 +503,48 @@ fn evaluate_letrec(
                             ));
                         }
                         names.insert(name.clone());
+                        let value = evaluate(value_node.clone(), env.clone())?;
+                        env.borrow_mut().define(name, value);
+                    } else {
+                        return Err(EvalError::NotASymbol(
+                            name_node.kind.borrow().clone(),
+                            definition.span.clone(),
+                        ));
+                    }
+                } else {
+                    return Err(EvalError::InvalidSpecialForm(
+                        "let: binding is not a pair (let (...(y <val>)) ...<expr>)".to_string(),
+                        definition.span.clone(),
+                    ));
+                }
+            }
+            evaluate_body(body_node.clone().into_iter(), env)
+        }
+        _ => Err(EvalError::InvalidSpecialForm(
+            // e.g. (lambda) or (lambda not-a-list)
+            "let: expected (let (...(y <val>)) ...<expr>)".to_string(),
+            original_span,
+        )),
+    }
+}
+
+fn evaluate_letstar(
+    operands: &Node,
+    env: Rc<RefCell<Environment>>,
+    original_span: Span,
+) -> EvalResult {
+    match &*operands.kind.borrow() {
+        Sexpr::Pair(definitions_node, body_node) => {
+            if !definitions_node.is_list() {
+                return Err(EvalError::InvalidSpecialForm(
+                    "let: expected (let (...(y <val>)) ...<expr>)".to_string(),
+                    definitions_node.span.clone(),
+                ));
+            }
+            let env = Environment::new_enclosed(env.clone());
+            for definition in definitions_node.clone().into_iter() {
+                if let Some((name_node, value_node)) = definition.undotted_pair() {
+                    if let Some(name) = name_node.symbol() {
                         let value = evaluate(value_node.clone(), env.clone())?;
                         env.borrow_mut().define(name, value);
                     } else {
@@ -2306,5 +2349,133 @@ mod tests {
         // R7RS: "It is an error for a <variable> to appear more than once."
         let dummy_error = EvalError::InvalidSpecialForm("letrec".to_string(), Default::default()); // Or DuplicateBinding
         assert_eval_error("(letrec ((x 1) (x (lambda () 2))) x)", &dummy_error, None);
+    }
+
+    // --- Tests for `let*` ---
+    #[test]
+    fn test_let_star_simple_binding() {
+        assert_eval_number("(let* ((x 10)) x)", 10.0, None);
+    }
+
+    #[test]
+    fn test_let_star_sequential_bindings() {
+        // x is 5, y is (+ x 10) = 15. Result (+ x y) = (+ 5 15) = 20.
+        let code = "(let* ((x 5) (y (+ x 10))) (+ x y))";
+        assert_eval_number(code, 20.0, None);
+    }
+
+    #[test]
+    fn test_let_star_value_expressions_can_refer_to_prior_bindings() {
+        let env = new_test_env();
+        eval_str("(define outer-val 100)", env.clone()).unwrap(); // Use eval_str to define
+        // y's expression (+ x outer-val) uses x from the same let*
+        // z's expression (+ y outer-val) uses y from the same let*
+        let code = "(let* ((x 10) \
+                           (y (+ x outer-val)) \
+                           (z (+ y outer-val))) \
+                      z)"; // x=10, y=110, z=210
+        assert_eval_number(code, 210.0, Some(env));
+    }
+
+    #[test]
+    fn test_let_star_no_bindings() {
+        assert_eval_number("(let* () 123)", 123.0, None);
+    }
+
+    #[test]
+    fn test_let_star_multiple_body_expressions() {
+        // Inside let*: x=1. Then (define local-y (+ x 2)) -> local-y=3 (local to let*'s scope).
+        // Then (* local-y x) -> 3.
+        let code = "(let* ((x 1)) (define local-y (+ x 2)) (* local-y x))";
+        assert_eval_number(code, 3.0, None);
+    }
+
+    #[test]
+    fn test_let_star_shadowing_outer_variable() {
+        let env = new_test_env();
+        eval_str("(define x 100)", env.clone()).unwrap();
+        assert_eval_number("(let* ((x 10)) (+ x 5))", 15.0, Some(env.clone()));
+        // Check outer x is unchanged using an eval_str that returns Result and then assert_env_var_is_number
+        let _ = eval_str("x", env.clone()).unwrap(); // just to make sure 'x' is evaluated for the next assert
+        assert_env_var_is_number(&env, "x", 100.0, "test_let_star_shadowing_outer_variable");
+    }
+
+    #[test]
+    fn test_let_star_shadowing_within_let_star() {
+        // First x is 10. Second x (shadowing first) is (+ x 1) = 11. Result is this second x.
+        let code = "(let* ((x 10) (x (+ x 1))) x)";
+        assert_eval_number(code, 11.0, None);
+    }
+
+    #[test]
+    fn test_let_star_empty_body() {
+        // (let* ((x 1)) ) -> result is unspecified (like an empty begin or lambda body)
+        // Assuming Nil for unspecified, as per your current implementation for empty begin/let.
+        assert_eval_kind("(let* ((x 1)))", &Sexpr::Nil, None);
+    }
+
+    // --- Error cases for `let*` ---
+    #[test]
+    fn test_let_star_syntax_error_no_bindings_list() {
+        let dummy_error = EvalError::InvalidSpecialForm("let*".to_string(), Default::default());
+        assert_eval_error("(let* x x)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_let_star_syntax_error_binding_not_a_pair() {
+        let dummy_error = EvalError::InvalidSpecialForm("let*".to_string(), Default::default());
+        assert_eval_error("(let* (x) x)", &dummy_error, None); // Binding 'x' is not (var expr)
+        assert_eval_error("(let* ((a 1) b (c 2)) b)", &dummy_error, None); // Binding 'b' is not (var expr)
+    }
+
+    #[test]
+    fn test_let_star_syntax_error_binding_var_not_symbol() {
+        let not_symbol_val = Sexpr::Number(123.0);
+        let dummy_error = EvalError::NotASymbol(not_symbol_val, Default::default());
+        assert_eval_error("(let* ((123 1)) 123)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_let_star_syntax_error_binding_pair_wrong_length() {
+        let dummy_error = EvalError::InvalidSpecialForm("let*".to_string(), Default::default());
+        assert_eval_error("(let* ((x)) x)", &dummy_error, None); // (x) not (x expr)
+        assert_eval_error("(let* ((x 1 2)) x)", &dummy_error, None); // (x 1 2) not (x expr)
+    }
+
+    #[test]
+    fn test_let_star_error_in_value_expression() {
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "non-existent".to_string(),
+            Default::default(),
+        ));
+        assert_eval_error("(let* ((x (+ 1 non-existent))) x)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_let_star_error_in_later_value_expression_first_binding_ok() {
+        let env = new_test_env(); // Create env to check side effects
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "non-existent".to_string(),
+            Default::default(),
+        ));
+        // x should be bound to 10 in a temporary scope for y's expression evaluation.
+        // If (+ x non-existent) errors, x=10 should not pollute the outer env.
+        assert_eval_error(
+            "(let* ((x 10) (y (+ x non-existent))) y)",
+            &dummy_error,
+            Some(env.clone()),
+        );
+        assert_env_var_is_not_defined(&env, "x", "test_let_star_error_in_later_value_expression");
+        assert_env_var_is_not_defined(&env, "y", "test_let_star_error_in_later_value_expression");
+    }
+
+    #[test]
+    fn test_let_star_duplicate_variable_in_bindings_is_allowed_and_shadows() {
+        // Unlike `let`, `let*` allows duplicate variables in its binding list because
+        // it's like nested `let`s. (let* ((x 1) (x (+ x 10))) x) is valid and was tested in
+        // test_let_star_shadowing_within_let_star. No specific error test needed here for duplicates.
+        // This test just serves as a reminder of this behavior.
+        let code = "(let* ((x 1) (x (+ x 10))) x)"; // x becomes 1, then new x becomes 1+10=11
+        assert_eval_number(code, 11.0, None);
     }
 }
