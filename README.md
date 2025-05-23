@@ -20,6 +20,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [ ] Add `Vector` type (`#( ... )`).
     * [ ] Add `Character` type (`#\a`).
     * [ ] Add `HashMap` type
+    * [ ] Add `HashSet` type
 * [x] **Lexer (`lexer.rs`):** Convert input string to `Token` stream.
     * [x] Handle basic tokens: `(`, `)`, `'`, symbols, numbers (float), booleans (`#t`, `#f`).
     * [x] Handle string literals (`"`).
@@ -39,7 +40,7 @@ This list outlines the planned development steps, subject to change as the proje
 * [ ] **Basic Environment (`environment.rs`):** Store variable bindings.
     * [x] Implement nested environments (for lexical scoping).
     * [x] Define/get variables.
-    * [ ] Handle `set!` for mutation.
+    * [x] Handle `set!` for mutation.
 * [ ] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
     * [x] Evaluate self-evaluating atoms (numbers, booleans, strings).
     * [x] Evaluate symbols (variable lookup in environment).
@@ -50,7 +51,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Implement `set!` special form.
     * [x] Implement `lambda` special form
     * [x] Implement `let` special form
-    * [ ] Implement `let*` special form
+    * [x] Implement `let*` special form
     * [x] Implement `letrec` special form
     * [x] Implement basic procedure calls (primitives first).
     * [ ] Implement robust error handling (`EvalError`).
