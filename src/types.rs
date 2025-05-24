@@ -98,6 +98,10 @@ impl Node {
         NodeIterator { current_node: self }
     }
 
+    pub fn into_dotted_iter(self: Node) -> DottedNodeIterator {
+        DottedNodeIterator { current_node: self }
+    }
+
     pub fn is_list(self: &Node) -> bool {
         match &*self.kind.borrow() {
             Sexpr::Nil => true,
@@ -149,6 +153,10 @@ pub enum Sexpr {
 }
 
 pub struct NodeIterator {
+    current_node: Node, // Current part of the argument list (Pair or Nil)
+}
+
+pub struct DottedNodeIterator {
     current_node: Node, // Current part of the argument list (Pair or Nil)
 }
 
@@ -261,6 +269,38 @@ impl Iterator for NodeIterator {
     }
 }
 
+impl Iterator for DottedNodeIterator {
+    type Item = (Node, bool); // Each item is the result of evaluating an argument expression
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sexpr = self.current_node.kind.borrow();
+        match &*sexpr {
+            Sexpr::Pair(car_node, cdr_node) => {
+                let node = car_node.clone();
+                let next_node = cdr_node.clone();
+                drop(sexpr);
+                // Advance the iterator's state to the rest of the list for the *next* call
+                self.current_node = next_node;
+
+                // Lazily evaluate the current argument expression
+                Some((node, false))
+            }
+            Sexpr::Nil => {
+                // We've reached the end of a proper list
+                None
+            }
+            _ => {
+                let node = self.current_node.clone();
+                // we've encountered a dotted pair (e.g., (a b . c) so return c)
+                // It doesn't matter what the span is here, because it's never returned
+                drop(sexpr);
+                self.current_node = Node::new_nil(Span::default());
+                Some((node, true))
+            }
+        }
+    }
+}
+
 // Implement Display trait for pretty printing the Sexpr values
 impl fmt::Display for Sexpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -271,7 +311,10 @@ impl fmt::Display for Sexpr {
             Sexpr::Pair(head, tail) => {
                 write!(f, "({}", head)?;
 
-                for node in tail.clone().into_iter() {
+                for (node, dotted) in tail.clone().into_dotted_iter() {
+                    if dotted {
+                        write!(f, " .")?;
+                    }
                     write!(f, " {}", node)?;
                 }
 

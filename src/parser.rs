@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_parse_quasiquote_dotted_list_with_unquote() {
-        assert_parsed_sexpr_string("`(a . ,b)", "(quasiquote (a . (unquote b)))");
+        assert_parsed_sexpr_string("`(a . ,b)", "(quasiquote (a unquote b))");
     }
 
     #[test]
@@ -657,9 +657,9 @@ mod tests {
         // `(a . ,@b)` is typically an error at evaluation time for unquote-splicing,
         // because ,@ needs to splice into a list context.
         // The parser, however, might just see `,@` and then `b` and form `(unquote-splicing b)`.
-        // So the parsed structure could be `(quasiquote (a . (unquote-splicing b)))`.
+        // So the parsed structure could be `(quasiquote (a unquote-splicing b))`.
         // This test checks if the parser produces this structure. The eval error is separate.
-        assert_parsed_sexpr_string("`(a . ,@b)", "(quasiquote (a . (unquote-splicing b)))");
+        assert_parsed_sexpr_string("`(a . ,@b)", "(quasiquote (a unquote-splicing b))");
     }
 
     // --- Potential Parser Error Cases (depending on your parser's strictness) ---
