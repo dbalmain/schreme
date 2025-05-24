@@ -61,9 +61,13 @@ impl Node {
     }
 
     pub fn new_quote(node: Node, quote_span: Span) -> Self {
+        Node::new_quoted_expr(node, "quote", quote_span)
+    }
+
+    pub fn new_quoted_expr(node: Node, quote_symbol: &str, quote_span: Span) -> Self {
         let span = quote_span.merge(&node.span);
         Node::new_pair(
-            Node::new_symbol("quote".to_owned(), quote_span),
+            Node::new_symbol(quote_symbol.to_owned(), quote_span),
             Node::new_pair(node, Node::new_nil(span), span),
             span,
         )

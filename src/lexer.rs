@@ -16,6 +16,12 @@ pub enum TokenKind {
     Dot,
     #[token("'")]
     Quote,
+    #[token("`")]
+    QuasiQuote,
+    #[token(",")]
+    Unquote,
+    #[token(",@")]
+    UnquoteSplicing,
     #[regex(r"[\p{Extended_Pictographic}.a-zA-Z0-9!#$%&*/:<=>?~_^+-]*", |lex| lex.slice().to_string())]
     Symbol(String),
     #[regex(r"[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?", |lex| {
@@ -85,6 +91,9 @@ impl fmt::Display for TokenKind {
             TokenKind::RParen => write!(f, ")"),
             TokenKind::Dot => write!(f, "."),
             TokenKind::Quote => write!(f, "'"),
+            TokenKind::QuasiQuote => write!(f, "`"),
+            TokenKind::Unquote => write!(f, ","),
+            TokenKind::UnquoteSplicing => write!(f, ",@"),
             TokenKind::Symbol(s) => write!(f, "{}", s),
             TokenKind::Number(n) => write!(f, "{}", n),
             TokenKind::Boolean(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
@@ -223,6 +232,24 @@ mod tests {
         assert_tokens(
             "(')",
             vec![TokenKind::LParen, TokenKind::Quote, TokenKind::RParen],
+        );
+        assert_tokens(" ` ", vec![TokenKind::QuasiQuote]);
+        assert_tokens(" , ", vec![TokenKind::Unquote]);
+        assert_tokens(" ,@ ", vec![TokenKind::UnquoteSplicing]);
+        assert_tokens(
+            "`(,@(1 2) ,x)",
+            vec![
+                TokenKind::QuasiQuote,
+                TokenKind::LParen,
+                TokenKind::UnquoteSplicing,
+                TokenKind::LParen,
+                TokenKind::Number(1.0),
+                TokenKind::Number(2.0),
+                TokenKind::RParen,
+                TokenKind::Unquote,
+                TokenKind::Symbol("x".to_string()),
+                TokenKind::RParen,
+            ],
         );
     }
 

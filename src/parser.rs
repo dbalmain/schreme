@@ -106,7 +106,19 @@ impl Parser {
             Some(Token {
                 kind: TokenKind::Quote,
                 span,
-            }) => self.parse_quote(span),
+            }) => self.parse_quoted_expr("quote", span),
+            Some(Token {
+                kind: TokenKind::QuasiQuote,
+                span,
+            }) => self.parse_quoted_expr("quasiquote", span),
+            Some(Token {
+                kind: TokenKind::Unquote,
+                span,
+            }) => self.parse_quoted_expr("unquote", span),
+            Some(Token {
+                kind: TokenKind::UnquoteSplicing,
+                span,
+            }) => self.parse_quoted_expr("unquote-splicing", span),
             Some(atom) => self.parse_atom(atom), // Handle atoms if not '(' or '''
             None => Err(ParseError::UnexpectedEof(")".to_string())), // No tokens left
         }
@@ -191,12 +203,16 @@ impl Parser {
     }
 
     /// Parses a quoted expression `'expr`.
-    fn parse_quote(&mut self, quote_span: Span) -> ParseResult<Node> {
+    fn parse_quoted_expr(&mut self, quote_symbol: &str, quote_span: Span) -> ParseResult<Node> {
         // Parse the expression immediately following the quote
         let quoted_expr = self.parse_expr()?;
 
         // Construct the equivalent (quote expr) S-expression
-        Ok(Node::new_quote(quoted_expr.clone(), quote_span))
+        Ok(Node::new_quoted_expr(
+            quoted_expr.clone(),
+            quote_symbol,
+            quote_span,
+        ))
     }
 
     /// Parses the entire sequence of tokens, expecting potentially multiple top-level expressions.
@@ -274,6 +290,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Helper function to tokenize and parse a single expression, then get its string representation.
+    // This simplifies the test assertions.
+    fn assert_parsed_sexpr_string(input: &str, expected_output: &str) {
+        let node = match parse_str(input) {
+            Ok(result) => result,
+            Err(e) => panic!("Parsing failed for input '{}': {}", input, e),
+        };
+        assert_eq!(node.to_string(), expected_output, "Input: '{}'", input);
     }
 
     fn node(sexpr: Sexpr, start: usize, end: usize) -> Node {
@@ -519,6 +545,146 @@ mod tests {
         assert_parse(
             " ; comment at start\n   'symbol   ; comment at end\n ",
             Node::new_quote(node_symbol("symbol", 24, 30), Span::new(23, 24)),
+        );
+    }
+
+    // --- Tests for Quasiquote (`), Unquote (,), Unquote-Splicing (,@) Parsing ---
+
+    #[test]
+    fn test_parse_quasiquote_simple_symbol() {
+        assert_parsed_sexpr_string("`foo", "(quasiquote foo)");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_simple_number() {
+        assert_parsed_sexpr_string("`123", "(quasiquote 123)");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_simple_list() {
+        assert_parsed_sexpr_string("`(a b c)", "(quasiquote (a b c))");
+    }
+
+    #[test]
+    fn test_parse_unquote_simple_symbol() {
+        // This would be inside a quasiquote in valid Scheme, but parser should still handle it.
+        assert_parsed_sexpr_string(",foo", "(unquote foo)");
+    }
+
+    #[test]
+    fn test_parse_unquote_simple_list() {
+        assert_parsed_sexpr_string(",(a b)", "(unquote (a b))");
+    }
+
+    #[test]
+    fn test_parse_unquote_splicing_simple_symbol() {
+        // This also would be inside a quasiquote.
+        assert_parsed_sexpr_string(",@foo", "(unquote-splicing foo)");
+    }
+
+    #[test]
+    fn test_parse_unquote_splicing_simple_list() {
+        assert_parsed_sexpr_string(",@(a b)", "(unquote-splicing (a b))");
+    }
+
+    // --- Combinations and Nesting ---
+
+    #[test]
+    fn test_parse_quasiquote_with_unquote() {
+        assert_parsed_sexpr_string("`(a ,b c)", "(quasiquote (a (unquote b) c))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_with_unquote_splicing() {
+        assert_parsed_sexpr_string("`(a ,@b c)", "(quasiquote (a (unquote-splicing b) c))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_with_multiple_unquotes() {
+        assert_parsed_sexpr_string(
+            "`(,a ,b ,@c ,d)",
+            "(quasiquote ((unquote a) (unquote b) (unquote-splicing c) (unquote d)))",
+        );
+    }
+
+    #[test]
+    fn test_parse_nested_quasiquote() {
+        assert_parsed_sexpr_string("``foo", "(quasiquote (quasiquote foo))");
+        assert_parsed_sexpr_string(
+            "`(a `(b ,c) d)",
+            "(quasiquote (a (quasiquote (b (unquote c))) d))",
+        );
+    }
+
+    #[test]
+    fn test_parse_quasiquote_unquote_nested_quasiquote() {
+        // `(a ,`(b ,c) d) -> (quasiquote (a (unquote (quasiquote (b (unquote c)))) d))
+        assert_parsed_sexpr_string(
+            "`(a ,`(b ,c) d)",
+            "(quasiquote (a (unquote (quasiquote (b (unquote c)))) d))",
+        );
+    }
+
+    #[test]
+    fn test_parse_quasiquote_with_unquote_splicing_at_start_of_list() {
+        assert_parsed_sexpr_string("`(,@a b c)", "(quasiquote ((unquote-splicing a) b c))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_with_unquote_splicing_at_end_of_list() {
+        assert_parsed_sexpr_string("`(a b ,@c)", "(quasiquote (a b (unquote-splicing c)))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_with_only_unquote_splicing() {
+        assert_parsed_sexpr_string("`(,@a)", "(quasiquote ((unquote-splicing a)))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_dotted_list_with_unquote() {
+        assert_parsed_sexpr_string("`(a . ,b)", "(quasiquote (a . (unquote b)))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_dotted_list_with_unquote_splicing_in_car() {
+        // This is unusual but syntactically parsable by the reader macro rules
+        assert_parsed_sexpr_string("`(,@a . b)", "(quasiquote ((unquote-splicing a) . b))");
+    }
+
+    #[test]
+    fn test_parse_quasiquote_unquote_splicing_in_dotted_cdr_is_error_for_eval_but_parser_might_allow()
+     {
+        // `(a . ,@b)` is typically an error at evaluation time for unquote-splicing,
+        // because ,@ needs to splice into a list context.
+        // The parser, however, might just see `,@` and then `b` and form `(unquote-splicing b)`.
+        // So the parsed structure could be `(quasiquote (a . (unquote-splicing b)))`.
+        // This test checks if the parser produces this structure. The eval error is separate.
+        assert_parsed_sexpr_string("`(a . ,@b)", "(quasiquote (a . (unquote-splicing b)))");
+    }
+
+    // --- Potential Parser Error Cases (depending on your parser's strictness) ---
+
+    #[test]
+    fn test_parse_dangling_backtick() {
+        assert!(
+            parse_str("`").is_err(),
+            "Dangling backtick should be a parser error"
+        );
+    }
+
+    #[test]
+    fn test_parse_dangling_comma() {
+        assert!(
+            parse_str(",").is_err(),
+            "Dangling comma should be a parser error"
+        );
+    }
+
+    #[test]
+    fn test_parse_dangling_comma_at() {
+        assert!(
+            parse_str(",@").is_err(),
+            "Dangling comma-at should be a parser error"
         );
     }
 }
