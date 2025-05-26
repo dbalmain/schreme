@@ -62,10 +62,12 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] List operations (`cons`, `car`, `cdr`, `list`).
     * [ ] Equality (`eq?`, `eqv?`, `equal?`).
 * [ ] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
-    * [ ] Read input line by line.
-    * [ ] Integrate Lexer, Parser, Evaluator.
-    * [ ] Print results or errors.
+    * [x] Read input line by line.
+    * [x] Integrate Lexer, Parser, Evaluator.
+    * [x] Print results or errors.
     * [ ] Add history (using rustyline?).
+    * [ ] Print clear errors showing where the error occured
+    * [ ] Syntax highlight bound and unbound variables
 * [ ] **Error Handling:** Unified and user-friendly error reporting.
     * [ ] Include source location/span information in errors.
     * [ ] Consistent error types/display.

@@ -13,3 +13,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "lexer_bench"
 harness = false
+
+[[repl]]
+name = "schreme-repl"
+path = "src/bin/repl.rs"
