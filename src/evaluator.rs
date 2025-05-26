@@ -9,13 +9,17 @@ use std::rc::Rc;
 // --- Evaluation Error ---
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalError {
-    EnvError(EnvError),               // Errors from environment lookup
-    NotAProcedure(Sexpr, Span),       // Tried to call something that isn't a procedure
-    InvalidArguments(String, Span),   // Mismatched arity or wrong type of args
-    NotASymbol(Sexpr, Span),          // Expected a symbol (e.g., for define/set!)
-    InvalidSpecialForm(String, Span), // Malformed special form (e.g., (if cond))
+    EnvError(EnvError),                   // Errors from environment lookup
+    NotAProcedure(Sexpr, Span),           // Tried to call something that isn't a procedure
+    InvalidArguments(String, Span),       // Mismatched arity or wrong type of args
+    NotASymbol(Sexpr, Span),              // Expected a symbol (e.g., for define/set!)
+    InvalidSpecialForm(String, Span),     // Malformed special form (e.g., (if cond))
     UnexpectedError(Sexpr, Span, String), // Expected a list for procedure call or special form
-                                      // Add more later: DivideByZero, WrongType, MacroError, etc.
+    TypeMismatch {
+        expected: String,
+        found: String,
+        span: Span,
+    }, // Type of argument was incorrect
 }
 
 impl fmt::Display for EvalError {
@@ -39,6 +43,17 @@ impl fmt::Display for EvalError {
             }
             EvalError::InvalidSpecialForm(msg, _span) => {
                 write!(f, "Evaluation Error: Invalid special form - {}", msg)
+            }
+            EvalError::TypeMismatch {
+                expected,
+                found,
+                span: _span,
+            } => {
+                write!(
+                    f,
+                    "Evaluation Error: TypeMispatch, expected {} but found {}",
+                    expected, found
+                )
             }
         }
     }
@@ -95,6 +110,7 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
             match &*first.kind.borrow() {
                 Sexpr::Symbol(sym_name) => match sym_name.as_str() {
                     "quote" => evaluate_quote(rest, node.span),
+                    "quasiquote" => evaluate_quasiquote(rest, env, node.span),
                     "if" => evaluate_if(rest, env, node.span),
                     "define" => evaluate_define(rest, env, node.span),
                     "set!" => evaluate_set_bang(rest, env, node.span),
@@ -103,6 +119,15 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                     "let" => evaluate_let(rest, env, node.span),
                     "letrec" => evaluate_letrec(rest, env, node.span),
                     "let*" => evaluate_letstar(rest, env, node.span),
+                    "unquote" | "unquote-splicing" => {
+                        return invalid_special_form(
+                            &format!(
+                                "{}: unquote and unquote-splicing must be used inside quasiquote",
+                                sym_name
+                            ),
+                            node.span,
+                        );
+                    }
                     _ => evaluate_procedure(first, rest, env, node.span),
                 },
 
@@ -190,6 +215,194 @@ fn evaluate_quote(operands: &Node, original_quote_span: Span) -> EvalResult {
                 original_quote_span,
             );
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum QuasiQuoteResult {
+    Splice(Node),
+    Insert(Node),
+}
+
+fn evaluate_quasiquote_recursive(
+    expr: Node,
+    env: Rc<RefCell<Environment>>,
+    depth: u32,                // Initial call from evaluate_quasiquote will use depth 1
+    original_call_span: &Span, // Span of the top-level quasiquote form for errors
+) -> EvalResult<QuasiQuoteResult> {
+    if !expr.is_pair() {
+        // If expr is not a pair, it is an atom (symbol, number, etc.)
+        // Return it as is, since atoms are treated literally in quasiquote.
+        return Ok(QuasiQuoteResult::Insert(expr.clone()));
+    }
+
+    // expr is a pair, so we need to process it recursively
+    let mut results: Vec<Node> = Vec::new();
+    let expr_span = expr.span.clone();
+
+    if let Some(name) = expr.call_name()
+        && (name == "unquote" || name == "unquote-splicing" || name == "quasiquote")
+    {
+        let mut items = expr.into_dotted_iter();
+        items.next(); // skip the first item which we already checked
+        let Some((arg, is_dotted)) = items.next() else {
+            return Err(EvalError::InvalidSpecialForm(
+                format!("{} expects exactly one argument but received none", name),
+                original_call_span.clone(),
+            ));
+        };
+        if is_dotted {
+            return Err(EvalError::InvalidSpecialForm(
+                format!("{} does not support dotted arguments", name),
+                original_call_span.clone(),
+            ));
+        }
+        if let Some(_) = items.next() {
+            return Err(EvalError::InvalidSpecialForm(
+                format!("{} expects exactly one argument but received more", name),
+                original_call_span.clone(),
+            ));
+        }
+        if name == "quasiquote" || depth > 1 {
+            if let QuasiQuoteResult::Insert(processed_nested_expr) = evaluate_quasiquote_recursive(
+                arg.clone(),
+                env,
+                if name == "quasiquote" {
+                    depth + 1
+                } else {
+                    depth - 1
+                }, // Increase depth for nested quasiquote
+                original_call_span,
+            )? {
+                return Ok(QuasiQuoteResult::Insert(Node::new_quoted_expr(
+                    processed_nested_expr,
+                    &name,
+                    expr_span,
+                )));
+            } else {
+                return Err(EvalError::UnexpectedError(
+                    arg.kind.borrow().clone(),
+                    original_call_span.clone(),
+                    format!("{} nested quasiquote should never return a splice", name),
+                ));
+            }
+        } else if name == "unquote" {
+            return evaluate(arg, env).map(QuasiQuoteResult::Insert);
+        } else if name == "unquote-splicing" {
+            return evaluate(arg, env).map(QuasiQuoteResult::Splice);
+        } else {
+            return Err(EvalError::UnexpectedError(
+                arg.kind.borrow().clone(),
+                original_call_span.clone(),
+                format!("{} this block should be unreachable", name),
+            ));
+        }
+    }
+
+    let mut dotted_tail: Option<Node> = None;
+    for (item, is_dotted) in expr.into_dotted_iter() {
+        if dotted_tail.is_some() {
+            return Err(EvalError::InvalidSpecialForm(
+                "quasiquote: cannot have undotted after dotted tail".to_string(),
+                expr_span.clone(),
+            ));
+        }
+        if item.is_pair() {
+            // If item is a pair, we need to process it recursively
+            match evaluate_quasiquote_recursive(item, env.clone(), depth, original_call_span)? {
+                QuasiQuoteResult::Insert(evaluated_item) => results.push(evaluated_item),
+                QuasiQuoteResult::Splice(splice_items) => {
+                    // If item is a splice, we need to extend results with the spliced items
+                    if !splice_items.is_list() {
+                        return Err(EvalError::TypeMismatch {
+                            expected: "list".to_string(),
+                            found: splice_items.kind.borrow().to_string(), // Or type_to_string()
+                            span: splice_items.span.clone(),
+                        });
+                    }
+                    for (splice_item, is_dotted) in splice_items.into_dotted_iter() {
+                        if is_dotted {
+                            dotted_tail = Some(splice_item);
+                        } else {
+                            results.push(splice_item);
+                        }
+                    }
+                }
+            }
+        } else {
+            // If item is an atom, we can just push it as is
+            if is_dotted {
+                dotted_tail = Some(item);
+            } else {
+                results.push(item);
+            }
+        }
+    }
+
+    // There is an edge case where the quote appears as the right element of a dotted pair.
+    // for example, `(1 . ,x) is expanded as (quasiquote (1 . (quote x))) which is equivalent
+    // to (quasiquote (1 quote x)). If this is not a dotted list and the second last element
+    // is quote, quote-splicing or quasiquote, we need to handle it.
+    if dotted_tail.is_none()
+        && results.len() > 1
+        && let Some(name_node) = results.get(results.len() - 2)
+        && let Some(name) = name_node.symbol()
+        && (name == "unquote" || name == "unquote-splicing" || name == "quasiquote")
+    {
+        let expr_node = results.pop().unwrap();
+        let name_node = results.pop().unwrap();
+        let span = name_node.span.merge(&expr_node.span);
+        match evaluate_quasiquote_recursive(
+            Node::new_tuple(name_node, expr_node, span),
+            env.clone(),
+            depth,
+            original_call_span,
+        )? {
+            QuasiQuoteResult::Insert(evaluated_item) => dotted_tail = Some(evaluated_item),
+            QuasiQuoteResult::Splice(_) => {
+                return Err(EvalError::InvalidSpecialForm(
+                    "unquote-splicing (,@) cannot appear in dotted tail".to_string(),
+                    span,
+                ));
+            }
+        }
+    }
+
+    Ok(QuasiQuoteResult::Insert(if dotted_tail.is_some() {
+        Node::from_iter_with_dotted_tail(results.into_iter(), dotted_tail.unwrap())
+    } else {
+        results.into_iter().collect()
+    }))
+}
+
+// This is the entry point called from your main evaluate function
+pub fn evaluate_quasiquote(
+    args_node: &Node, // This is the `datum` part from `(quasiquote datum)`
+    env: Rc<RefCell<Environment>>,
+    span: Span, // Span of the (quasiquote ...) form itself
+) -> EvalResult {
+    if let Some(expr) = args_node.singleton() {
+        // If args_node is a singleton, we can directly process it
+        match evaluate_quasiquote_recursive(expr.clone(), env, 1, &span)? {
+            QuasiQuoteResult::Insert(processed_expr) => {
+                // Return the processed expression wrapped in a Node
+                Ok(processed_expr)
+            }
+            QuasiQuoteResult::Splice(_) => {
+                // If we get a splice here, it means we tried to unquote-splice at the top level,
+                // which is not allowed in quasiquote.
+                Err(EvalError::InvalidSpecialForm(
+                    "unquote-splicing (,@) must appear within a list context in quasiquote"
+                        .to_string(),
+                    span,
+                ))
+            }
+        }
+    } else {
+        Err(EvalError::InvalidSpecialForm(
+            "quasiquote expects exactly one argument".to_string(),
+            span,
+        ))
     }
 }
 
@@ -439,7 +652,7 @@ fn evaluate_let(operands: &Node, env: Rc<RefCell<Environment>>, original_span: S
             }
             let mut variables: HashMap<String, Node> = HashMap::new();
             for definition in definitions_node.clone().into_iter() {
-                if let Some((name_node, value_node)) = definition.undotted_pair() {
+                if let Some((name_node, value_node)) = definition.tuple() {
                     if let Some(name) = name_node.symbol() {
                         if variables.contains_key(&name) {
                             return Err(EvalError::InvalidSpecialForm(
@@ -494,7 +707,7 @@ fn evaluate_letrec(
             let env = Environment::new_enclosed(env.clone());
             let mut names: HashSet<String> = HashSet::new();
             for definition in definitions_node.clone().into_iter() {
-                if let Some((name_node, value_node)) = definition.undotted_pair() {
+                if let Some((name_node, value_node)) = definition.tuple() {
                     if let Some(name) = name_node.symbol() {
                         if names.contains(&name) {
                             return Err(EvalError::InvalidSpecialForm(
@@ -543,7 +756,7 @@ fn evaluate_letstar(
             }
             let env = Environment::new_enclosed(env.clone());
             for definition in definitions_node.clone().into_iter() {
-                if let Some((name_node, value_node)) = definition.undotted_pair() {
+                if let Some((name_node, value_node)) = definition.tuple() {
                     if let Some(name) = name_node.symbol() {
                         let value = evaluate(value_node.clone(), env.clone())?;
                         env.borrow_mut().define(name, value);
@@ -1798,7 +2011,6 @@ mod tests {
     fn test_define_func_syntax_error_param_not_symbol() {
         let env = new_test_env();
         let result = eval_str("(define (my-func x 123 y) (+ x y))", env.clone());
-        println!("{:?}", result);
         assert!(
             matches!(result, Err(EvalError::NotASymbol(_, _))),
             "Parameters in function definition must be symbols"
@@ -1930,7 +2142,6 @@ mod tests {
             env.clone(),
         );
 
-        println!("{:?}", result);
         assert!(
             matches!(
                 result,
@@ -2477,5 +2688,234 @@ mod tests {
         // This test just serves as a reminder of this behavior.
         let code = "(let* ((x 1) (x (+ x 10))) x)"; // x becomes 1, then new x becomes 1+10=11
         assert_eval_number(code, 11.0, None);
+    }
+
+    // --- Tests for Quasiquote (`), Unquote (,), Unquote-Splicing (,@) Evaluation ---
+    #[test]
+    fn test_eval_quasiquote_literal_atom() {
+        assert_eval_sexpr("`foo", "foo", None);
+        assert_eval_number("`123", 123.0, None);
+        assert_eval_sexpr("`#t", "#t", None);
+        assert_eval_sexpr("`\"hello\"", "\"hello\"", None);
+        assert_eval_sexpr("`()", "()", None);
+    }
+
+    #[test]
+    fn test_eval_quasiquote_literal_list() {
+        assert_eval_sexpr("`(a b c)", "(a b c)", None);
+        assert_eval_sexpr("`(a (b c) d)", "(a (b c) d)", None);
+        assert_eval_sexpr("`(a . b)", "(a . b)", None);
+    }
+
+    #[test]
+    fn test_eval_unquote_simple() {
+        let env = new_test_env();
+        eval_str("(define x 10)", env.clone()).unwrap();
+        assert_eval_sexpr("`(a ,x c)", "(a 10 c)", Some(env.clone()));
+
+        eval_str("(define y '(foo bar))", env.clone()).unwrap();
+        assert_eval_sexpr("`(a ,y c)", "(a (foo bar) c)", Some(env));
+    }
+
+    #[test]
+    fn test_eval_unquote_expression() {
+        let env = new_test_env();
+        eval_str("(define x 5)", env.clone()).unwrap();
+        assert_eval_sexpr("`(a ,(+ x 2) c)", "(a 7 c)", Some(env));
+    }
+
+    #[test]
+    fn test_eval_unquote_splicing_simple() {
+        let env = new_test_env();
+        eval_str("(define items '(1 2 3))", env.clone()).unwrap();
+        assert_eval_sexpr("`(a ,@items c)", "(a 1 2 3 c)", Some(env.clone()));
+
+        eval_str("(define head '(x y))", env.clone()).unwrap();
+        eval_str("(define tail '(z))", env.clone()).unwrap();
+        assert_eval_sexpr("`(,@head item ,@tail)", "(x y item z)", Some(env));
+    }
+
+    #[test]
+    fn test_eval_unquote_splicing_expression_evaluates_to_list() {
+        let env = new_test_env();
+        eval_str("(define (get-list n) (list n (+ n 1)))", env.clone()).unwrap();
+        assert_eval_sexpr(
+            "`(start ,@(get-list 10) end)",
+            "(start 10 11 end)",
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_eval_unquote_splicing_empty_list() {
+        assert_eval_sexpr("`(a ,@'() c)", "(a c)", None);
+        assert_eval_sexpr("`(,@'() c)", "(c)", None);
+        assert_eval_sexpr("`(a ,@'())", "(a)", None);
+        assert_eval_sexpr("`(,@'())", "()", None);
+    }
+
+    #[test]
+    fn test_eval_quasiquote_mixed_unquote_and_splice() {
+        let env = new_test_env();
+        eval_str("(define item 'x)", env.clone()).unwrap();
+        eval_str("(define prefix '(a b))", env.clone()).unwrap();
+        eval_str("(define suffix '(y z))", env.clone()).unwrap();
+        assert_eval_sexpr(
+            "`(,@prefix ,item item2 ,@suffix final)",
+            "(a b x item2 y z final)",
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_eval_nested_quasiquote_no_inner_unquote_active() {
+        // `(a `(b ,x) c) -> (a (quasiquote (b (unquote x))) c)
+        // The inner (unquote x) is not evaluated by the outer quasiquote's context.
+        let env = new_test_env();
+        eval_str("(define x 100)", env.clone()).unwrap(); // This x should not be used by inner ,x
+        assert_eval_sexpr(
+            "`(a `(b ,x) c)",
+            "(a (quasiquote (b (unquote x))) c)", // x remains as symbol 'x'
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_eval_nested_quasiquote_with_inner_unquote_activated() {
+        // `(a ,`(b ,x) c)
+        // Outer unquote activates evaluation of `(b ,x)
+        // This inner quasiquote then evaluates, and its unquote for x becomes active.
+        let env = new_test_env();
+        eval_str("(define x 10)", env.clone()).unwrap();
+        assert_eval_sexpr("`(a ,`(b ,x) c)", "(a (b 10) c)", Some(env));
+    }
+
+    #[test]
+    fn test_eval_nested_quasiquote_with_splicing() {
+        let env = new_test_env();
+        eval_str("(define inner-val 10)", env.clone()).unwrap();
+        eval_str("(define items-to-splice '(foo bar))", env.clone()).unwrap();
+        // `(level1 ,`(level2 ,inner-val ,@items-to-splice) level1-end)
+        assert_eval_sexpr(
+            "`(level1 ,`(level2 ,inner-val ,@items-to-splice) level1-end)",
+            "(level1 (level2 10 foo bar) level1-end)",
+            Some(env),
+        );
+    }
+
+    #[test]
+    fn test_eval_quasiquote_level_management_complex() {
+        let env = new_test_env();
+        eval_str("(define x 'outer-x)", env.clone()).unwrap();
+        eval_str("(define y 'outer-y)", env.clone()).unwrap();
+        eval_str("(define z 'outer-z)", env.clone()).unwrap();
+
+        assert_eval_sexpr(
+            "`(a ,x `(b ,y ,,z))",
+            "(a outer-x (quasiquote (b (unquote y) (unquote outer-z))))",
+            Some(env.clone()),
+        );
+
+        assert_eval_sexpr(
+            "`(a ,x `(b ,y ,,z ,`(c ,x ,,y)))",
+            "(a outer-x (quasiquote (b (unquote y) (unquote outer-z) (unquote (quasiquote (c (unquote x) (unquote outer-y)))))))",
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_eval_unquote_wrong_number_of_args() {
+        let dummy_error = EvalError::InvalidSpecialForm(
+            "unquote-splicing not in proper list context".to_string(),
+            Default::default(),
+        );
+        assert_eval_error("`(a (unquote 1 2))", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_eval_quasiquote_dotted_list() {
+        let env = new_test_env();
+        eval_str("(define val 10)", env.clone()).unwrap();
+        assert_eval_sexpr("`(a . ,val)", "(a . 10)", Some(env.clone()));
+        assert_eval_sexpr("`(a b . ,val)", "(a b . 10)", Some(env));
+    }
+
+    #[test]
+    fn test_eval_quasiquote_splicing_into_dotted_position_not_allowed_by_standard() {
+        // ,@ must be in a list context. (a . ,@ L) is usually an error because '.' expects a single datum.
+        // Your parser produced (quasiquote (a unquote-splicing L)) for `(a . ,@L) if L is '(1 2)
+        // This evaluation depends on how your `evaluate_quasiquote_recursive` handles
+        // (unquote-splicing L) when it's not directly an element of a list being built.
+        // If it treats it like (unquote L) in this context if L is not a list for splicing.
+        // Or it errors. Standard Scheme typically errors.
+        let env = new_test_env();
+        eval_str("(define my-list '(1 2))", env.clone()).unwrap();
+
+        // If parser makes it `(quasiquote (a unquote-splicing my-list))`
+        // And `evaluate_quasiquote_recursive` encounters `(unquote-splicing my-list)` as the cdr.
+        // It should probably error if not in a list construction loop.
+        // Let's assume an error similar to "unquote-splicing not in list context"
+        // or a type error if it tries to make a pair with a non-spliced list.
+        let dummy_error = EvalError::InvalidSpecialForm(
+            "unquote-splicing not in proper list context".to_string(),
+            Default::default(),
+        );
+        assert_eval_error("`(a . ,@my-list)", &dummy_error, Some(env));
+    }
+
+    #[test]
+    fn test_eval_quasiquote_splicing_in_car_of_dotted_list() {
+        // `(,@items . end)` where items is '(1 2)
+        // parser -> (quasiquote ((unquote-splicing items) . end))
+        // eval should produce (1 2 . end)
+        let env = new_test_env();
+        eval_str("(define items '(1 2))", env.clone()).unwrap();
+        eval_str("(define end-val 'final)", env.clone()).unwrap();
+        assert_eval_sexpr("`(,@items . ,end-val)", "(1 2 . final)", Some(env));
+    }
+
+    // --- Error Cases for Quasiquote Evaluation ---
+    #[test]
+    fn test_eval_error_unquote_outside_quasiquote() {
+        // Parser might create (unquote x), evaluator should reject it at top level.
+        let dummy_error = EvalError::InvalidSpecialForm(
+            "unquote outside quasiquote".to_string(),
+            Default::default(),
+        );
+        assert_eval_error("(unquote x)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_eval_error_unquote_splicing_outside_quasiquote() {
+        let dummy_error = EvalError::InvalidSpecialForm(
+            "unquote-splicing outside quasiquote".to_string(),
+            Default::default(),
+        );
+        assert_eval_error("(unquote-splicing x)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_eval_error_unquote_splicing_non_list_value() {
+        let env = new_test_env();
+        eval_str("(define not-a-list 123)", env.clone()).unwrap();
+        // Error should be TypeMismatch or similar when trying to splice a number
+        let dummy_error = EvalError::TypeMismatch {
+            expected: "list".to_string(),
+            found: "Number".to_string(), // Adjust if your type string is different
+            span: Default::default(),
+        };
+        assert_eval_error("`(a ,@not-a-list c)", &dummy_error, Some(env));
+    }
+
+    #[test]
+    fn test_eval_error_unquote_missing_argument() {
+        let result1 = parse_str("(,)");
+        assert!(matches!(result1, Err(ParseError::UnexpectedToken { .. })));
+    }
+
+    #[test]
+    fn test_eval_error_unquote_splicing_missing_argument() {
+        let result1 = parse_str("(,@)");
+        assert!(matches!(result1, Err(ParseError::UnexpectedToken { .. })));
     }
 }

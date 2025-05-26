@@ -32,6 +32,17 @@ impl Node {
         }
     }
 
+    /// Helper to create a tuple node, which is a Pair(X, Pair(Y, Nil)).
+    pub fn new_tuple(car: Node, cdr: Node, pair_span: Span) -> Self {
+        Node {
+            kind: Rc::new(RefCell::new(Sexpr::Pair(
+                car,
+                Node::new_pair(cdr, Node::new_nil(pair_span.clone()), pair_span),
+            ))),
+            span: pair_span,
+        }
+    }
+
     pub fn new_bool(val: bool, span: Span) -> Self {
         Node {
             kind: Rc::new(RefCell::new(Sexpr::Boolean(val))),
@@ -110,7 +121,21 @@ impl Node {
         }
     }
 
-    pub fn undotted_pair(self: &Node) -> Option<(Node, Node)> {
+    pub fn is_pair(self: &Node) -> bool {
+        match &*self.kind.borrow() {
+            Sexpr::Pair(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_nil(self: &Node) -> bool {
+        match &*self.kind.borrow() {
+            Sexpr::Nil => true,
+            _ => false,
+        }
+    }
+
+    pub fn tuple(self: &Node) -> Option<(Node, Node)> {
         match &*self.kind.borrow() {
             Sexpr::Pair(first, rest) => match &*rest.kind.borrow() {
                 Sexpr::Pair(second, must_be_nil) => match &*must_be_nil.kind.borrow() {
@@ -123,11 +148,56 @@ impl Node {
         }
     }
 
+    pub fn pair(self: &Node) -> Option<(Node, Node)> {
+        match &*self.kind.borrow() {
+            Sexpr::Pair(first, rest) => Some((first.clone(), rest.clone())),
+            _ => None,
+        }
+    }
+
+    pub fn singleton(self: &Node) -> Option<Node> {
+        match &*self.kind.borrow() {
+            Sexpr::Pair(inner_expr_node, rest) => {
+                if !rest.is_nil() {
+                    None
+                } else {
+                    Some(inner_expr_node.clone())
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn symbol(self: &Node) -> Option<String> {
         match &*self.kind.borrow() {
             Sexpr::Symbol(symbol) => Some(symbol.clone()),
             _ => None,
         }
+    }
+
+    pub fn call_name(self: &Node) -> Option<String> {
+        match &*self.kind.borrow() {
+            Sexpr::Pair(head_node, _rest) => head_node.symbol(),
+            _ => None,
+        }
+    }
+
+    pub fn from_iter_with_dotted_tail<T: Iterator<Item = Node>>(
+        nodes: T,
+        dotted_tail: Node,
+    ) -> Self {
+        let nodes: Vec<Node> = nodes.collect();
+        let mut current_span = dotted_tail.span.clone();
+        let mut current_list_node = dotted_tail;
+        // Iterate in reverse to build the list: (cons item (cons item ... nil))
+        for item_node in nodes.into_iter().rev() {
+            // The `item_node` already has its own span from its source or evaluation.
+            // The new `Pair` node we're creating needs a span.
+            // Using a synthetic span for the pair structure itself is common.
+            current_span = item_node.span.merge(&current_span);
+            current_list_node = Node::new_pair(item_node.clone(), current_list_node, current_span);
+        }
+        current_list_node
     }
 }
 
