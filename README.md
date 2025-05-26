@@ -33,7 +33,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Parse atoms (symbols, numbers, booleans, strings).
     * [x] Parse lists (`(...)`).
     * [x] Handle quote sugar (`'expr` -> `(quote expr)`).
-    * [ ] Handle quasiquote/unquote (`,`, `,@`) later.
+    * [x] Handle quasiquote/unquote (`,`, `,@`) later.
     * [x] Implement robust error handling (`ParseError`).
     * [x] Add comprehensive unit tests.
     * [ ] Add helpful explanations of errors, like Elm.
