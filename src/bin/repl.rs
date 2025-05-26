@@ -1,4 +1,9 @@
+use rustyline::highlight::MatchingBracketHighlighter;
+use rustyline::validate::MatchingBracketValidator;
+use rustyline::{Cmd, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Result};
+use rustyline::{Completer, Helper, Highlighter, Hinter, Validator};
 // src/bin/repl.rs
+use rustyline::error::ReadlineError;
 use schreme::{
     Environment, // Your existing parse_str or similar
     // Node, Sexpr, etc. might be needed for printing results
@@ -7,36 +12,46 @@ use schreme::{
     lexer::tokenize,
     parser::parse_str,
 };
-use std::io::{self, Write}; // For stdin/stdout
 
-fn main() {
+#[derive(Completer, Helper, Highlighter, Hinter, Validator)]
+struct InputValidator {
+    #[rustyline(Validator)]
+    brackets: MatchingBracketValidator,
+    #[rustyline(Highlighter)]
+    highlighter: MatchingBracketHighlighter,
+}
+
+fn main() -> rustyline::Result<()> {
     println!("Schreme REPL v0.1.0"); // Or your version
     println!("Type 'exit' or press Ctrl-D to quit.");
 
-    let global_env = Environment::new_global_populated(); // Your global env
+    let global_env = Environment::new_global_populated();
+    let h = InputValidator {
+        brackets: MatchingBracketValidator::new(),
+        highlighter: MatchingBracketHighlighter::new(),
+    };
+    let mut rl = Editor::new()?;
+    rl.set_helper(Some(h));
+    rl.bind_sequence(
+        KeyEvent(KeyCode::Char('s'), Modifiers::CTRL),
+        EventHandler::Simple(Cmd::Newline),
+    );
+    if rl.load_history("schreme_history.txt").is_err() {
+        println!("No previous history.");
+    }
 
     loop {
-        print!("schreme> "); // Prompt
-        io::stdout().flush().unwrap(); // Ensure prompt is shown before input
-
-        let mut input_line = String::new();
-        match io::stdin().read_line(&mut input_line) {
-            Ok(0) => {
-                // EOF (Ctrl-D)
-                println!("\nExiting.");
-                break;
-            }
-            Ok(_) => {
-                let trimmed_input = input_line.trim();
+        let readline = rl.readline("schreme> ");
+        match readline {
+            Ok(line) => {
+                rl.add_history_entry(line.as_str())?;
+                let trimmed_input = line.trim();
                 if trimmed_input.is_empty() {
-                    continue; // Skip empty lines
+                    continue;
                 }
                 if trimmed_input.eq_ignore_ascii_case("exit") {
-                    println!("Exiting.");
                     break;
                 }
-
-                // TODO: Handle multi-line input later
 
                 match parse_str(trimmed_input) {
                     Ok(node) => {
@@ -44,11 +59,11 @@ fn main() {
                             // Clone Rc for each eval
                             Ok(result_node) => {
                                 // TODO: Pretty print result_node
-                                println!("{}", result_node.to_string()); // Or result_node.to_string()
+                                println!("{}", result_node.to_string());
                             }
                             Err(e) => {
                                 // TODO: Pretty print error e
-                                eprintln!("Error: {}", e); // Basic error printing
+                                eprintln!("Error: {}", e);
                             }
                         }
                     }
@@ -58,10 +73,20 @@ fn main() {
                     }
                 }
             }
-            Err(io_err) => {
-                eprintln!("I/O Error: {}", io_err);
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl-C
+                println!("Interrupted. Type 'exit' or Ctrl-D to quit.");
+            }
+            Err(ReadlineError::Eof) => {
+                // Ctrl-D
+                println!("\nExiting.");
+                break;
+            }
+            Err(err) => {
+                eprintln!("Readline Error: {:?}", err);
                 break;
             }
         }
     }
+    rl.save_history("schreme_history.txt")
 }

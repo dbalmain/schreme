@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 logos = "0.15.0"
+rustyline = { version = "16.0.0", features = ["custom-bindings", "derive"] }
 thiserror = "2.0.12"
 
 [dev-dependencies]
