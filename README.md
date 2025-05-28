@@ -65,9 +65,11 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Read input line by line.
     * [x] Integrate Lexer, Parser, Evaluator.
     * [x] Print results or errors.
-    * [ ] Add history (using rustyline?).
-    * [ ] Print clear errors showing where the error occured
-    * [ ] Syntax highlight bound and unbound variables
+    * [x] Handle multiline input.
+    * [x] Add history (using rustyline?).
+    * [x] Add tab completion.
+    * [ ] Print clear errors showing where the error occured.
+    * [ ] Syntax highlight bound and unbound variables.
 * [ ] **Error Handling:** Unified and user-friendly error reporting.
     * [ ] Include source location/span information in errors.
     * [ ] Consistent error types/display.

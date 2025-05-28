@@ -1,7 +1,9 @@
+use logos::Source;
+
 use crate::source::Span;
 use crate::types::{Node, PrimitiveFunc};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -142,6 +144,23 @@ impl Environment {
     fn add_primitive(&mut self, name: &str, func: PrimitiveFunc) {
         let node = Node::new_primitive(func, name, Span::default());
         self.define(name.to_string(), node);
+    }
+
+    fn add_identifiers(&self, mut identifiers: HashSet<String>) -> HashSet<String> {
+        // Try finding in the current environment's bindings
+        for identifier in self.bindings.keys() {
+            identifiers.insert(identifier.to_string());
+        }
+        identifiers
+    }
+
+    /// Gets a list of all identifiers in the current environment
+    pub fn get_identifiers(&self) -> HashSet<String> {
+        let identifiers = self.bindings.keys().map(|i| i.to_string()).collect();
+        match self.outer {
+            Some(ref outer_env_ptr) => outer_env_ptr.borrow().add_identifiers(identifiers),
+            None => identifiers,
+        }
     }
 }
 

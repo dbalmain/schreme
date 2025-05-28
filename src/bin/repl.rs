@@ -1,9 +1,16 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use rustyline::completion::Completer;
 use rustyline::highlight::MatchingBracketHighlighter;
 use rustyline::validate::MatchingBracketValidator;
-use rustyline::{Cmd, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Result};
-use rustyline::{Completer, Helper, Highlighter, Hinter, Validator};
+use rustyline::{
+    Cmd, Completer, Context, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Result,
+};
+use rustyline::{Helper, Highlighter, Hinter, Validator};
 // src/bin/repl.rs
 use rustyline::error::ReadlineError;
+use schreme::TokenKind;
 use schreme::{
     Environment, // Your existing parse_str or similar
     // Node, Sexpr, etc. might be needed for printing results
@@ -13,12 +20,59 @@ use schreme::{
     parser::parse_str,
 };
 
+struct SchremeCompleter {
+    env: Rc<RefCell<Environment>>,
+}
+
+impl SchremeCompleter {
+    fn new(env: Rc<RefCell<Environment>>) -> Self {
+        SchremeCompleter { env }
+    }
+}
+
+impl rustyline::completion::Completer for SchremeCompleter {
+    type Candidate = String;
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        Ok((
+            pos,
+            match tokenize(line) {
+                Ok(tokens) => {
+                    if let Some(TokenKind::Symbol(prefix)) = tokens.last().map(|t| t.kind.clone()) {
+                        self.env
+                            .borrow()
+                            .get_identifiers()
+                            .union(&schreme::evaluator::special_form_identifiers())
+                            .filter_map(|id| {
+                                if id.starts_with(&prefix) {
+                                    Some(id[prefix.len()..].to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    }
+                }
+                Err(_) => vec![],
+            },
+        ))
+    }
+}
+
 #[derive(Completer, Helper, Highlighter, Hinter, Validator)]
 struct InputValidator {
     #[rustyline(Validator)]
     brackets: MatchingBracketValidator,
     #[rustyline(Highlighter)]
     highlighter: MatchingBracketHighlighter,
+    #[rustyline(Completer)]
+    completer: SchremeCompleter,
 }
 
 fn main() -> rustyline::Result<()> {
@@ -29,6 +83,7 @@ fn main() -> rustyline::Result<()> {
     let h = InputValidator {
         brackets: MatchingBracketValidator::new(),
         highlighter: MatchingBracketHighlighter::new(),
+        completer: SchremeCompleter::new(global_env.clone()),
     };
     let mut rl = Editor::new()?;
     rl.set_helper(Some(h));

@@ -138,6 +138,26 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
     }
 }
 
+pub fn special_form_identifiers() -> HashSet<String> {
+    [
+        "quote",
+        "quasiquote",
+        "if",
+        "define",
+        "set!",
+        "lambda",
+        "begin",
+        "let",
+        "letrec",
+        "let*",
+        "unquote",
+        "unquote-splicing",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 fn invalid_special_form(error: &str, span: Span) -> EvalResult {
     Err(EvalError::InvalidSpecialForm(error.to_string(), span))
 }
