@@ -40,7 +40,7 @@ impl rustyline::completion::Completer for SchremeCompleter {
     ) -> rustyline::Result<(usize, Vec<String>)> {
         Ok((
             pos,
-            match tokenize(line) {
+            match tokenize(&line[..pos]) {
                 Ok(tokens) => {
                     if let Some(TokenKind::Symbol(prefix)) = tokens.last().map(|t| t.kind.clone()) {
                         self.env
