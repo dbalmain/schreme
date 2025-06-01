@@ -1,15 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use rustyline::completion::Completer;
-use rustyline::highlight::MatchingBracketHighlighter;
-use rustyline::validate::MatchingBracketValidator;
-use rustyline::{
-    Cmd, Completer, Context, Editor, EventHandler, KeyCode, KeyEvent, Modifiers, Result,
-};
-use rustyline::{Helper, Highlighter, Hinter, Validator};
-// src/bin/repl.rs
 use rustyline::error::ReadlineError;
+use rustyline::highlight::{CmdKind, Highlighter};
+use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+use rustyline::{Cmd, Completer, Context, Editor, EventHandler, KeyCode, KeyEvent, Modifiers};
+use rustyline::{Helper, Highlighter, Hinter, Validator};
 use schreme::TokenKind;
 use schreme::{
     Environment, // Your existing parse_str or similar
@@ -68,11 +64,142 @@ impl rustyline::completion::Completer for SchremeCompleter {
 #[derive(Completer, Helper, Highlighter, Hinter, Validator)]
 struct InputValidator {
     #[rustyline(Validator)]
-    brackets: MatchingBracketValidator,
+    validator: SchremeValidator,
     #[rustyline(Highlighter)]
-    highlighter: MatchingBracketHighlighter,
+    highlighter: SchremeHighlighter,
     #[rustyline(Completer)]
     completer: SchremeCompleter,
+}
+
+struct SchremeValidator;
+
+impl Validator for SchremeValidator {
+    fn validate(&self, ctx: &mut ValidationContext) -> rustyline::Result<ValidationResult> {
+        let input = ctx.input();
+        let mut stack = Vec::new();
+        let mut in_string = false;
+        let mut escape = false;
+
+        for (i, c) in input.chars().enumerate() {
+            if in_string {
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            match c {
+                '"' => {
+                    in_string = true;
+                }
+                '(' | '[' | '{' => {
+                    stack.push((c, i));
+                }
+                ')' | ']' | '}' => {
+                    if let Some((opening, _)) = stack.pop() {
+                        if !((opening == '(' && c == ')')
+                            || (opening == '[' && c == ']')
+                            || (opening == '{' && c == '}'))
+                        {
+                            return Ok(ValidationResult::Invalid(Some(format!(
+                                "  - Unmatched '{}' at position {}",
+                                c, i
+                            ))));
+                        }
+                    } else {
+                        return Ok(ValidationResult::Invalid(Some(format!(
+                            "  - Unmatched '{}' at position {}",
+                            c, i
+                        ))));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if in_string {
+            Ok(ValidationResult::Incomplete)
+        } else if let Some((_, _)) = stack.pop() {
+            Ok(ValidationResult::Incomplete)
+        } else {
+            Ok(ValidationResult::Valid(None))
+        }
+    }
+}
+
+struct SchremeHighlighter;
+
+impl Highlighter for SchremeHighlighter {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
+        let mut stack: Vec<(char, usize)> = Vec::new();
+        let mut highlighted = String::new();
+        let mut in_string = false;
+        let mut escape = false;
+
+        for (i, c) in line.chars().enumerate() {
+            if in_string {
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                highlighted.push_str(&format!("\x1b[32m{}\x1b[0m", c)); // Green for strings
+                continue;
+            }
+
+            match c {
+                '"' => {
+                    in_string = true;
+                    highlighted.push_str(&format!("\x1b[32m{}\x1b[0m", c)); // Green for strings
+                }
+                '(' | '[' | '{' => {
+                    stack.push((c, highlighted.len()));
+                    highlighted.push(c);
+                }
+                ')' | ']' | '}' => {
+                    if let Some((opening, matching_pos)) = stack.pop() {
+                        if (opening == '(' && c == ')')
+                            || (opening == '[' && c == ']')
+                            || (opening == '{' && c == '}')
+                        {
+                            if matching_pos == pos - 1 || i == pos - 1 {
+                                highlighted.push_str(&format!("\x1b[34m{}\x1b[0m", c)); // Blue for matching brackets
+                                highlighted.replace_range(
+                                    matching_pos..=matching_pos,
+                                    &format!("\x1b[1;34m{}\x1b[0m", opening as char),
+                                );
+                            } else {
+                                highlighted.push(c);
+                            }
+                        } else {
+                            highlighted.push_str(&format!("\x1b[31m{}\x1b[0m", c)); // Red for unmatched closing brackets
+                            highlighted.replace_range(
+                                matching_pos..=matching_pos,
+                                &format!("\x1b[1;31m{}\x1b[0m", opening as char),
+                            );
+                        }
+                    } else {
+                        highlighted.push_str(&format!("\x1b[31m{}\x1b[0m", c)); // Red for unmatched closing brackets
+                    }
+                }
+                _ => {
+                    highlighted.push(c);
+                }
+            }
+        }
+
+        std::borrow::Cow::Owned(highlighted)
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
+        return true;
+    }
 }
 
 fn main() -> rustyline::Result<()> {
@@ -81,11 +208,14 @@ fn main() -> rustyline::Result<()> {
 
     let global_env = Environment::new_global_populated();
     let h = InputValidator {
-        brackets: MatchingBracketValidator::new(),
-        highlighter: MatchingBracketHighlighter::new(),
+        highlighter: SchremeHighlighter,
+        validator: SchremeValidator,
         completer: SchremeCompleter::new(global_env.clone()),
     };
-    let mut rl = Editor::new()?;
+    let config = rustyline::config::Config::builder()
+        .edit_mode(rustyline::EditMode::Vi)
+        .build();
+    let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(h));
     rl.bind_sequence(
         KeyEvent(KeyCode::Char('s'), Modifiers::CTRL),
