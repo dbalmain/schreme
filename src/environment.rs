@@ -1,5 +1,3 @@
-use logos::Source;
-
 use crate::source::Span;
 use crate::types::{Node, PrimitiveFunc};
 use std::cell::RefCell;
@@ -75,6 +73,7 @@ impl Environment {
             env.add_primitive("symbol?", crate::primitives::prim_is_symbol);
             env.add_primitive("string?", crate::primitives::prim_is_string);
             env.add_primitive("procedure?", crate::primitives::prim_is_procedure);
+            env.add_primitive("kind", crate::primitives::prim_kind);
         }
         env_ptr
     }

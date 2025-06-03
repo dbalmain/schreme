@@ -349,3 +349,12 @@ pub fn prim_is_string(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
 pub fn prim_is_procedure(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     type_predicate!(args, Sexpr::Procedure(_), "procedure?", span)
 }
+
+pub fn prim_kind(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let first_arg_node = expect_node(&mut args, "kind", 1, 1, span)?;
+    expect_no_more_args(&mut args, "kind", 1, span)?;
+    Ok(Node::new_string(
+        first_arg_node.kind.borrow().type_name(),
+        span,
+    ))
+}

@@ -222,6 +222,20 @@ pub enum Sexpr {
     Procedure(Procedure),
 }
 
+impl Sexpr {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Sexpr::Number(_) => "number",
+            Sexpr::Symbol(_) => "symbol",
+            Sexpr::Boolean(_) => "boolean",
+            Sexpr::String(_) => "string",
+            Sexpr::Pair(_, _) => "pair",
+            Sexpr::Nil => "nil",
+            Sexpr::Procedure(_) => "procedure",
+        }
+    }
+}
+
 pub struct NodeIterator {
     current_node: Node, // Current part of the argument list (Pair or Nil)
 }

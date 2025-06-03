@@ -18,6 +18,10 @@ impl Span {
             end: self.end.max(other.end),
         }
     }
+
+    pub fn to_range(&self) -> std::ops::RangeInclusive<usize> {
+        self.start..=(self.end - 1)
+    }
 }
 
 impl fmt::Display for Span {

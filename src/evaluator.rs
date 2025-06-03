@@ -17,7 +17,7 @@ pub enum EvalError {
     UnexpectedError(Sexpr, Span, String), // Expected a list for procedure call or special form
     TypeMismatch {
         expected: String,
-        found: String,
+        found: Sexpr,
         span: Span,
     }, // Type of argument was incorrect
 }
@@ -336,7 +336,7 @@ fn evaluate_quasiquote_recursive(
                     if !splice_items.is_list() {
                         return Err(EvalError::TypeMismatch {
                             expected: "list".to_string(),
-                            found: splice_items.kind.borrow().to_string(), // Or type_to_string()
+                            found: splice_items.kind.borrow().clone(),
                             span: splice_items.span.clone(),
                         });
                     }
@@ -855,20 +855,6 @@ fn evaluate_body<T: Iterator<Item = Node>>(exprs: T, env: Rc<RefCell<Environment
         result = evaluate(expr.clone(), env.clone());
     }
     result
-}
-
-impl Sexpr {
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Sexpr::Number(_) => "number",
-            Sexpr::Symbol(_) => "symbol",
-            Sexpr::Boolean(_) => "boolean",
-            Sexpr::String(_) => "string",
-            Sexpr::Pair(_, _) => "pair",
-            Sexpr::Nil => "nil",
-            Sexpr::Procedure(_) => "procedure",
-        }
-    }
 }
 
 // Add more primitives: cons, car, cdr, list, null?, pair?, etc.
@@ -2921,7 +2907,7 @@ mod tests {
         // Error should be TypeMismatch or similar when trying to splice a number
         let dummy_error = EvalError::TypeMismatch {
             expected: "list".to_string(),
-            found: "Number".to_string(), // Adjust if your type string is different
+            found: Sexpr::Symbol("not-a-list".to_string()),
             span: Default::default(),
         };
         assert_eval_error("`(a ,@not-a-list c)", &dummy_error, Some(env));
