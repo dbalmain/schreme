@@ -29,19 +29,19 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Add comprehensive unit tests.
     * [x] Setup benchmarking with Criterion (`cargo bench`).
     * [x] Turn the lexer into a FSM
-* [ ] **Parser (`parser.rs`):** Convert `Token` stream to `Sexpr` (AST).
+* [x] **Parser (`parser.rs`):** Convert `Token` stream to `Sexpr` (AST).
     * [x] Parse atoms (symbols, numbers, booleans, strings).
     * [x] Parse lists (`(...)`).
     * [x] Handle quote sugar (`'expr` -> `(quote expr)`).
     * [x] Handle quasiquote/unquote (`,`, `,@`) later.
     * [x] Implement robust error handling (`ParseError`).
     * [x] Add comprehensive unit tests.
-    * [ ] Add helpful explanations of errors, like Elm.
-* [ ] **Basic Environment (`environment.rs`):** Store variable bindings.
+    * [x] Add helpful explanations of errors, like Elm.
+* [x] **Basic Environment (`environment.rs`):** Store variable bindings.
     * [x] Implement nested environments (for lexical scoping).
     * [x] Define/get variables.
     * [x] Handle `set!` for mutation.
-* [ ] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
+* [x] **Evaluator (`evaluator.rs`):** Execute `Sexpr` AST.
     * [x] Evaluate self-evaluating atoms (numbers, booleans, strings).
     * [x] Evaluate symbols (variable lookup in environment).
     * [x] Implement `quote` special form.
@@ -54,7 +54,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Implement `let*` special form
     * [x] Implement `letrec` special form
     * [x] Implement basic procedure calls (primitives first).
-    * [ ] Implement robust error handling (`EvalError`).
+    * [x] Implement robust error handling (`EvalError`).
 * [ ] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
     * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
@@ -68,11 +68,11 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Handle multiline input.
     * [x] Add history (using rustyline?).
     * [x] Add tab completion.
-    * [ ] Print clear errors showing where the error occured.
+    * [x] Print clear errors showing where the error occured.
     * [ ] Syntax highlight bound and unbound variables.
-* [ ] **Error Handling:** Unified and user-friendly error reporting.
-    * [ ] Include source location/span information in errors.
-    * [ ] Consistent error types/display.
+* [x] **Error Handling:** Unified and user-friendly error reporting.
+    * [x] Include source location/span information in errors.
+    * [x] Consistent error types/display.
 
 ### Phase 2: Tooling & Ecosystem (Start Early)
 
@@ -96,51 +96,51 @@ This list outlines the planned development steps, subject to change as the proje
     * [ ] Evaluate existing `tree-sitter-scheme`.
     * [ ] Consider creating `tree-sitter-schreme` if syntax diverges significantly.
     * [ ] Explore using Tree-sitter *within* the LSP for faster, more resilient parsing for IDE features.
-*   [ ] **Debugger Implementation:** Provide step-through debugging capabilities.
-    *   [ ] **Foundation & Control:**
-        *   [ ] Define Breakpoint structure (file/line/column or span).
-        *   [ ] Implement setting/clearing breakpoints.
-        *   [ ] Modify Evaluator loop/structure to check for breakpoints and pause execution.
-        *   [ ] Implement execution control commands (Step In, Step Over, Step Out, Continue).
-    *   [ ] **State Inspection:**
-        *   [ ] Inspect current `Environment` bindings (variable names/values).
-        *   [ ] Implement call stack tracking during evaluation.
-        *   [ ] Display the current call stack.
-        *   [ ] Pretty-print `Sexpr`/`Node` values during inspection.
-    *   [ ] **Interface/Protocol:**
-        *   [ ] **Option A: Debug Adapter Protocol (DAP):**
-            *   [ ] Setup separate DAP server binary.
-            *   [ ] Implement DAP communication (JSON-RPC).
-            *   [ ] Handle DAP requests (setBreakpoints, configurationDone, threads, stackTrace, scopes, variables, continue, stepIn, etc.).
-            *   [ ] Send DAP events (stopped, terminated, output, etc.).
-        *   [ ] **Option B: REPL Integration:**
-            *   [ ] Add debug-specific commands to the REPL (`break`, `step`, `continue`, `print`, `stack`, etc.).
-    *   [ ] **Cranelift Backend Debugging (Later):**
-        *   [ ] Generate Debug Information (DWARF?) mapping compiled code to source Spans during Cranelift compilation.
-        *   [ ] Investigate integration with native debuggers (GDB/LLDB) via DWARF.
-        *   [ ] Explore JIT debugging hooks if using `cranelift-jit`.
-*   [ ] **Profiler Implementation:** Analyze performance characteristics.
-    *   [ ] **Data Collection Strategy:**
-        *   [ ] **Option A: Instrumentation:**
-            *   [ ] Instrument procedure calls (entry/exit time/count) in the evaluator.
-            *   [ ] Instrument primitive calls.
-        *   [ ] **Option B: Sampling:**
-            *   [ ] Periodically sample the interpreter's call stack.
-        *   [ ] Choose and implement one or both strategies.
-    *   [ ] **Metrics:**
-        *   [ ] Track time spent per function/primitive.
-        *   [ ] Track call counts per function/primitive.
-        *   [ ] (Optional) Track allocations per function.
-    *   [ ] **Interpreter Integration:**
-        *   [ ] Add hooks/wrappers around evaluation steps and function calls.
-        *   [ ] Manage profiler state (enabled/disabled, data storage).
-    *   [ ] **Data Reporting:**
-        *   [ ] Implement basic text-based report (e.g., table sorted by time).
-        *   [ ] Output data compatible with external tools (e.g., `perf` format, flamegraph collapsed stack format).
-        *   [ ] Implement flame graph generation (e.g., using `inferno`).
-    *   [ ] **Cranelift Backend Profiling (Later):**
-        *   [ ] Integrate with Cranelift/LLVM profiling features if applicable.
-        *   [ ] Correlate compiled code performance metrics back to Schreme source functions.
+* [ ] **Debugger Implementation:** Provide step-through debugging capabilities.
+    * [ ] **Foundation & Control:**
+        * [ ] Define Breakpoint structure (file/line/column or span).
+        * [ ] Implement setting/clearing breakpoints.
+        * [ ] Modify Evaluator loop/structure to check for breakpoints and pause execution.
+        * [ ] Implement execution control commands (Step In, Step Over, Step Out, Continue).
+    * [ ] **State Inspection:**
+        * [ ] Inspect current `Environment` bindings (variable names/values).
+        * [ ] Implement call stack tracking during evaluation.
+        * [ ] Display the current call stack.
+        * [ ] Pretty-print `Sexpr`/`Node` values during inspection.
+    * [ ] **Interface/Protocol:**
+        * [ ] **Option A: Debug Adapter Protocol (DAP):**
+            * [ ] Setup separate DAP server binary.
+            * [ ] Implement DAP communication (JSON-RPC).
+            * [ ] Handle DAP requests (setBreakpoints, configurationDone, threads, stackTrace, scopes, variables, continue, stepIn, etc.).
+            * [ ] Send DAP events (stopped, terminated, output, etc.).
+        * [ ] **Option B: REPL Integration:**
+            * [ ] Add debug-specific commands to the REPL (`break`, `step`, `continue`, `print`, `stack`, etc.).
+    * [ ] **Cranelift Backend Debugging (Later):**
+        * [ ] Generate Debug Information (DWARF?) mapping compiled code to source Spans during Cranelift compilation.
+        * [ ] Investigate integration with native debuggers (GDB/LLDB) via DWARF.
+        * [ ] Explore JIT debugging hooks if using `cranelift-jit`.
+* [ ] **Profiler Implementation:** Analyze performance characteristics.
+    * [ ] **Data Collection Strategy:**
+        * [ ] **Option A: Instrumentation:**
+            * [ ] Instrument procedure calls (entry/exit time/count) in the evaluator.
+            * [ ] Instrument primitive calls.
+        * [ ] **Option B: Sampling:**
+            * [ ] Periodically sample the interpreter's call stack.
+        * [ ] Choose and implement one or both strategies.
+    * [ ] **Metrics:**
+        * [ ] Track time spent per function/primitive.
+        * [ ] Track call counts per function/primitive.
+        * [ ] (Optional) Track allocations per function.
+    * [ ] **Interpreter Integration:**
+        * [ ] Add hooks/wrappers around evaluation steps and function calls.
+        * [ ] Manage profiler state (enabled/disabled, data storage).
+    * [ ] **Data Reporting:**
+        * [ ] Implement basic text-based report (e.g., table sorted by time).
+        * [ ] Output data compatible with external tools (e.g., `perf` format, flamegraph collapsed stack format).
+        * [ ] Implement flame graph generation (e.g., using `inferno`).
+    * [ ] **Cranelift Backend Profiling (Later):**
+        * [ ] Integrate with Cranelift/LLVM profiling features if applicable.
+        * [ ] Correlate compiled code performance metrics back to Schreme source functions.
 * [ ] **Testing Framework:**
     * [ ] Develop infrastructure for running Scheme code tests against the interpreter.
     * [ ] Integrate with `cargo test`.
@@ -153,10 +153,10 @@ This list outlines the planned development steps, subject to change as the proje
 
 ### Phase 3: Advanced Scheme Features
 
-* [ ] **Lambda & Closures:** Implement user-defined procedures.
-    * [ ] `lambda` special form.
-    * [ ] Proper lexical scoping (capture environment).
-    * [ ] Procedure call evaluation for user functions.
+* [x] **Lambda & Closures:** Implement user-defined procedures.
+    * [x] `lambda` special form.
+    * [x] Proper lexical scoping (capture environment).
+    * [x] Procedure call evaluation for user functions.
 * [ ] **Tail Call Optimization (TCO):** Essential for idiomatic Scheme recursion.
     * [ ] Implement TCO within the tree-walking evaluator (Trampoline, or direct jump).
 * [ ] **Macros:** Implement hygienic macros (`syntax-rules`).

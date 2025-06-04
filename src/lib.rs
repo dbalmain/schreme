@@ -2,6 +2,7 @@ pub mod environment;
 pub mod evaluator;
 pub mod lexer;
 pub mod parser;
+pub mod pretty_print;
 pub mod primitives;
 pub mod source;
 pub mod types;
