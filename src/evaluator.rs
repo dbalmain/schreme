@@ -495,33 +495,45 @@ fn evaluate_apply(
     env: Rc<RefCell<Environment>>,
     original_span: Span,
 ) -> EvalResult {
-    match &*operands.kind.borrow() {
-        Sexpr::Pair(operator_node, args) => match &*args.kind.borrow() {
-            Sexpr::Pair(arg1, rest) => match &*rest.kind.borrow() {
-                Sexpr::Nil => evaluate_procedure(
-                    operator_node,
-                    &evaluate(arg1.clone(), env.clone())?,
-                    env,
+    let operands = &*operands.kind.borrow();
+    match operands {
+        Sexpr::Pair(operator_node, args) => {
+            if !args.is_list() {
+                return Err(EvalError::InvalidArguments(
+                    "Primitive 'apply' expects at least 2 arguments, got dotted pair".to_string(),
                     original_span,
-                ),
-                Sexpr::Pair(_, _) => evaluate_procedure(operator_node, args, env, original_span),
-                arg => Err(EvalError::InvalidArguments(
-                    format!(
-                        "Primitive 'apply' expects a list of arguments, received a {}",
-                        arg.type_name()
-                    ),
+                ));
+            }
+            let mut arg_collector: Vec<Node> = vec![];
+            for (arg, is_dotted) in args.clone().into_dotted_iter() {
+                if is_dotted {
+                    return Err(EvalError::InvalidArguments(
+                        "Primitive 'apply' does not accept dotted list".to_string(),
+                        arg.span,
+                    ));
+                }
+                arg_collector.push(arg);
+            }
+            if let Some(args) = arg_collector.pop() {
+                let mut args = evaluate(args, env.clone())?;
+                if !args.is_list() {
+                    return Err(EvalError::InvalidArguments(
+                        "Primitive 'apply' expects the last argument to be a list".to_string(),
+                        args.span,
+                    ));
+                }
+                for arg in arg_collector.into_iter().rev() {
+                    let span = args.span.merge(&arg.span);
+                    args = Node::new_pair(arg, args, span);
+                }
+                evaluate_procedure(operator_node, &args, env, original_span)
+            } else {
+                return Err(EvalError::InvalidArguments(
+                    "Primitive 'apply' expects at least 2 arguments, got 1".to_string(),
                     original_span,
-                )),
-            },
-            Sexpr::Nil => Err(EvalError::InvalidArguments(
-                "Primitive 'apply' expects at least 2 arguments, got 1".to_string(),
-                original_span,
-            )),
-            _ => Err(EvalError::InvalidArguments(
-                "Primitive 'apply' expects at least 2 arguments, got dotted pair".to_string(),
-                original_span,
-            )),
-        },
+                ));
+            }
+        }
         Sexpr::Nil => Err(EvalError::InvalidArguments(
             "Primitive 'apply' expects at least 2 arguments, got 0".to_string(),
             original_span,
@@ -2972,14 +2984,15 @@ mod tests {
 
     #[test]
     fn test_apply_with_list() {
-        let env = new_test_env();
-        assert_eval_kind("(apply + '(1 2 3))", &Sexpr::Number(6.0), Some(env.clone()));
-    }
-
-    #[test]
-    fn test_apply_with_arguments() {
-        let env = new_test_env();
-        assert_eval_kind("(apply + 1 2 3)", &Sexpr::Number(6.0), Some(env.clone()));
+        assert_eval_kind("(apply + '(1 2 3))", &Sexpr::Number(6.0), None);
+        assert_eval_sexpr("(apply (lambda (x y) (list x y)) '(1 2))", "(1 2)", None);
+        assert_eval_kind("(apply + 1 2 '(3 4 5))", &Sexpr::Number(15.0), None);
+        assert_eval_kind("(apply + 1 2 3 '())", &Sexpr::Number(6.0), None);
+        assert_eval_kind(
+            "(apply (lambda x (apply + x)) 1 2 3 '(4 5))",
+            &Sexpr::Number(15.0),
+            None,
+        );
     }
 
     #[test]
