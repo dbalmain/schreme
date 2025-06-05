@@ -20,7 +20,7 @@ impl Span {
     }
 
     pub fn to_range(&self) -> std::ops::RangeInclusive<usize> {
-        self.start..=(self.end - 1)
+        self.start..=(if self.end == 0 { 0 } else { self.end - 1 })
     }
 }
 

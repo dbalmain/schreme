@@ -60,6 +60,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
     * [x] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
     * [x] List operations (`cons`, `car`, `cdr`, `list`).
+    * [x] Lambda application (`apply`)
     * [ ] Equality (`eq?`, `eqv?`, `equal?`).
 * [ ] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
     * [x] Read input line by line.

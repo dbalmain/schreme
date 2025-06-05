@@ -128,6 +128,7 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                             node.span,
                         );
                     }
+                    "apply" => evaluate_apply(rest, env, node.span),
                     _ => evaluate_procedure(first, rest, env, node.span),
                 },
 
@@ -140,16 +141,17 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
 pub fn special_form_identifiers() -> HashSet<String> {
     [
-        "quote",
-        "quasiquote",
-        "if",
-        "define",
-        "set!",
-        "lambda",
+        "apply",
         "begin",
+        "define",
+        "if",
+        "lambda",
         "let",
-        "letrec",
         "let*",
+        "letrec",
+        "quasiquote",
+        "quote",
+        "set!",
         "unquote",
         "unquote-splicing",
     ]
@@ -484,6 +486,49 @@ fn evaluate_define(
         _ => Err(EvalError::NotASymbol(
             operands.kind.borrow().clone(),
             operands.span,
+        )),
+    }
+}
+
+fn evaluate_apply(
+    operands: &Node,
+    env: Rc<RefCell<Environment>>,
+    original_span: Span,
+) -> EvalResult {
+    match &*operands.kind.borrow() {
+        Sexpr::Pair(operator_node, args) => match &*args.kind.borrow() {
+            Sexpr::Pair(arg1, rest) => match &*rest.kind.borrow() {
+                Sexpr::Nil => evaluate_procedure(
+                    operator_node,
+                    &evaluate(arg1.clone(), env.clone())?,
+                    env,
+                    original_span,
+                ),
+                Sexpr::Pair(_, _) => evaluate_procedure(operator_node, args, env, original_span),
+                arg => Err(EvalError::InvalidArguments(
+                    format!(
+                        "Primitive 'apply' expects a list of arguments, received a {}",
+                        arg.type_name()
+                    ),
+                    original_span,
+                )),
+            },
+            Sexpr::Nil => Err(EvalError::InvalidArguments(
+                "Primitive 'apply' expects at least 2 arguments, got 1".to_string(),
+                original_span,
+            )),
+            _ => Err(EvalError::InvalidArguments(
+                "Primitive 'apply' expects at least 2 arguments, got dotted pair".to_string(),
+                original_span,
+            )),
+        },
+        Sexpr::Nil => Err(EvalError::InvalidArguments(
+            "Primitive 'apply' expects at least 2 arguments, got 0".to_string(),
+            original_span,
+        )),
+        _ => Err(EvalError::InvalidArguments(
+            "Primitive 'apply' expects at least 2 arguments, got dotted pair".to_string(),
+            original_span,
         )),
     }
 }
@@ -2923,5 +2968,48 @@ mod tests {
     fn test_eval_error_unquote_splicing_missing_argument() {
         let result1 = parse_str("(,@)");
         assert!(matches!(result1, Err(ParseError::UnexpectedToken { .. })));
+    }
+
+    #[test]
+    fn test_apply_with_list() {
+        let env = new_test_env();
+        assert_eval_kind("(apply + '(1 2 3))", &Sexpr::Number(6.0), Some(env.clone()));
+    }
+
+    #[test]
+    fn test_apply_with_arguments() {
+        let env = new_test_env();
+        assert_eval_kind("(apply + 1 2 3)", &Sexpr::Number(6.0), Some(env.clone()));
+    }
+
+    #[test]
+    fn test_apply_invalid_procedure() {
+        let env = new_test_env();
+        assert_eval_error(
+            "(apply 1 '(2 3))",
+            &EvalError::NotAProcedure(Sexpr::Number(1.0), Span::default()),
+            Some(env.clone()),
+        );
+    }
+
+    #[test]
+    fn test_apply_insufficient_arguments() {
+        let env = new_test_env();
+        assert_eval_error(
+            "(apply)",
+            &EvalError::InvalidArguments(
+                "Primitive 'apply' expects at least 2 arguments, got 0".to_string(),
+                Span::default(),
+            ),
+            Some(env.clone()),
+        );
+        assert_eval_error(
+            "(apply +)",
+            &EvalError::InvalidArguments(
+                "Primitive 'apply' expects at least 2 arguments, got 1".to_string(),
+                Span::default(),
+            ),
+            Some(env.clone()),
+        );
     }
 }
