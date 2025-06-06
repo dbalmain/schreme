@@ -526,7 +526,10 @@ fn evaluate_apply(
                     let span = args.span.merge(&arg.span);
                     args = Node::new_pair(arg, args, span);
                 }
-                evaluate_procedure(operator_node, &args, env, original_span)
+                evaluate(
+                    Node::new_pair(operator_node.clone(), args, original_span),
+                    env,
+                )
             } else {
                 return Err(EvalError::InvalidArguments(
                     "Primitive 'apply' expects at least 2 arguments, got 1".to_string(),
@@ -2991,6 +2994,11 @@ mod tests {
         assert_eval_kind(
             "(apply (lambda x (apply + x)) 1 2 3 '(4 5))",
             &Sexpr::Number(15.0),
+            None,
+        );
+        assert_eval_kind(
+            "(apply if '(#t 1 unbound-variable))",
+            &Sexpr::Number(1.0),
             None,
         );
     }
