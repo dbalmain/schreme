@@ -1,5 +1,10 @@
 use crate::{Environment, evaluate, evaluator::EvalResult, source::Span};
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt,
+    rc::Rc,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
@@ -238,10 +243,53 @@ impl Node {
         let right_kind = other.kind.borrow();
 
         match (&*left_kind, &*right_kind) {
-            (Sexpr::Pair(left_car, left_cdr), Sexpr::Pair(right_car, right_cdr)) => {
-                left_car.scheme_equal(right_car) && left_cdr.scheme_equal(right_cdr)
+            (Sexpr::Pair(_, _), Sexpr::Pair(_, _)) => {
+                let mut seen: HashSet<(*const RefCell<Sexpr>, *const RefCell<Sexpr>)> =
+                    HashSet::new();
+                self.schreme_equal_recursive(other, &mut seen)
             }
             // eqv? would have handled any other case
+            _ => false,
+        }
+    }
+
+    fn schreme_equal_recursive(
+        &self,
+        other: &Node,
+        seen: &mut HashSet<(*const RefCell<Sexpr>, *const RefCell<Sexpr>)>,
+    ) -> bool {
+        if self.scheme_eqv(other) {
+            return true;
+        }
+
+        let left_kind = self.kind.borrow();
+        let right_kind = other.kind.borrow();
+
+        match (&*left_kind, &*right_kind) {
+            (Sexpr::Pair(self_car, self_cdr), Sexpr::Pair(other_car, other_cdr)) => {
+                // Cycle detection:
+                // Get pointers to the Rc<RefCell<Sexpr>> data for self and other.
+                let self_ptr = Rc::as_ptr(&self.kind);
+                let other_ptr = Rc::as_ptr(&other.kind);
+
+                // The reverse check is not strictly necessary but reduces the risk of stack overflow
+                // e.g. `(,@long-a ,@long-b) and `(,@long-b ,@long-a)
+                if seen.contains(&(self_ptr, other_ptr)) || seen.contains(&(other_ptr, self_ptr)) {
+                    // This means we've encountered a cycle
+                    return true;
+                }
+
+                // Add this pair of objects to the 'seen' set before recursing
+                seen.insert((self_ptr, other_ptr));
+
+                self_car.schreme_equal_recursive(other_car, seen)
+                    && self_cdr.schreme_equal_recursive(other_cdr, seen)
+            }
+            // Add Sexpr::Vector comparison here when you have vectors
+            // (Sexpr::Vector(v1), Sexpr::Vector(v2)) => { ... similar logic to pairs ... }
+
+            // If types differ or they are not compound types that equal? handles specially,
+            // and they weren't eqv?, then they are not equal?.
             _ => false,
         }
     }
@@ -249,9 +297,53 @@ impl Node {
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Delegate to Sexpr's Display implementation
-        write!(f, "{}", self.kind.borrow())
-        // Or potentially include span info in debug formats, but not default Display
+        fn recursive_pair_fmt(
+            node: &Node,
+            f: &mut fmt::Formatter<'_>,
+            index: isize,
+            is_first: bool,
+            seen: &mut HashMap<*const RefCell<Sexpr>, isize>,
+        ) -> fmt::Result {
+            if is_first {}
+            let ptr = Rc::as_ptr(&node.kind);
+            if let Some(seen_index) = seen.get(&ptr) {
+                if !is_first {
+                    write!(f, " ")?;
+                }
+                return write!(f, ". #{}#", seen_index - index);
+            }
+            match &*node.kind.borrow() {
+                Sexpr::Pair(head, tail) => {
+                    seen.insert(ptr, index + 1);
+                    if !is_first {
+                        write!(f, " ")?;
+                    }
+                    if head.is_list() {
+                        if let Some(seen_index) = seen.get(&Rc::as_ptr(&head.kind)) {
+                            write!(f, "#{}#", seen_index - index - 1)?;
+                        } else {
+                            write!(f, "(")?;
+                            recursive_pair_fmt(head, f, index + 1, true, seen)?;
+                            write!(f, ")")?;
+                        }
+                    } else {
+                        write!(f, "{}", head)?;
+                    }
+                    recursive_pair_fmt(tail, f, index + 1, false, seen)
+                }
+                Sexpr::Nil => Ok(()),
+                node => write!(f, " . {}", node),
+            }
+        }
+
+        if self.is_list() {
+            write!(f, "(")?;
+            recursive_pair_fmt(self, f, 0, true, &mut HashMap::new())?;
+            write!(f, ")")
+        } else {
+            // Delegate to Sexpr's Display implementation
+            write!(f, "{}", self.kind.borrow())
+        }
     }
 }
 
@@ -439,6 +531,7 @@ impl fmt::Display for Sexpr {
             Sexpr::Number(n) => write!(f, "{}", n),
             Sexpr::Boolean(b) => write!(f, "{}", if *b { "#t" } else { "#f" }),
             Sexpr::Pair(head, tail) => {
+                // note this doesn't handle cycles but the Node fmt function does
                 write!(f, "({}", head)?;
 
                 for (node, dotted) in tail.clone().into_dotted_iter() {

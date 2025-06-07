@@ -62,6 +62,7 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] List operations (`cons`, `car`, `cdr`, `list`).
     * [x] Lambda application (`apply`)
     * [x] Equality (`eq?`, `eqv?`, `equal?`).
+    * [x] Add list mutators (`set-car!`, `set-cdr!`).
 * [x] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
     * [x] Read input line by line.
     * [x] Integrate Lexer, Parser, Evaluator.

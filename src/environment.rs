@@ -63,7 +63,15 @@ impl Environment {
             env.add_primitive("cons", crate::primitives::prim_cons);
             env.add_primitive("car", crate::primitives::prim_car);
             env.add_primitive("cdr", crate::primitives::prim_cdr);
+            env.add_primitive("cddr", crate::primitives::prim_cddr);
+            env.add_primitive("cadr", crate::primitives::prim_cadr);
+            env.add_primitive("cdddr", crate::primitives::prim_cdddr);
+            env.add_primitive("caddr", crate::primitives::prim_caddr);
+            env.add_primitive("cddddr", crate::primitives::prim_cddddr);
+            env.add_primitive("cadddr", crate::primitives::prim_cadddr);
             env.add_primitive("list", crate::primitives::prim_list);
+            env.add_primitive("set-car!", crate::primitives::prim_set_car);
+            env.add_primitive("set-cdr!", crate::primitives::prim_set_cdr);
 
             // Add Type Predicates
             env.add_primitive("null?", crate::primitives::prim_is_null);

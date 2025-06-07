@@ -237,6 +237,12 @@ fn expect_no_more_args(
     }
 }
 
+fn expect_one_arg(mut args: EvaluatedNodeIterator, span: Span, name: &str) -> EvalResult {
+    let first_arg_node = expect_node(&mut args, name, 1, 1, span)?;
+    expect_no_more_args(&mut args, name, 1, span)?;
+    Ok(first_arg_node)
+}
+
 fn expect_two_args(
     mut args: EvaluatedNodeIterator,
     span: Span,
@@ -248,22 +254,19 @@ fn expect_two_args(
     Ok((first_arg_node, second_arg_node))
 }
 
-pub fn prim_cons(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+pub fn prim_cons(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (cons item '()) -> '(item)
     // (cons a '(b c)) -> '(a b c)
     // (cons a b) -> '(a . b)
-    let car = expect_node(&mut args, "cons", 1, 2, span)?;
-    let cdr = expect_node(&mut args, "cons", 2, 2, span)?;
-    expect_no_more_args(&mut args, "cons", 2, span)?;
+    let (car, cdr) = expect_two_args(args, span, "cons")?;
     Ok(Node::new(Sexpr::Pair(car, cdr), span))
 }
 
-pub fn prim_car(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+pub fn prim_car(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (car '()) -> Error
     // (car a) -> Error // a is not a list
     // (car '(a b c)) -> a
-    let first_arg_node = expect_node(&mut args, "car", 1, 1, span)?;
-    expect_no_more_args(&mut args, "car", 1, span)?;
+    let first_arg_node = expect_one_arg(args, span, "car")?;
     let first_arg = first_arg_node.kind.borrow();
     match &*first_arg {
         Sexpr::Pair(car, _) => Ok(car.clone()),
@@ -276,12 +279,11 @@ pub fn prim_car(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     }
 }
 
-pub fn prim_cdr(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+pub fn prim_cdr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (cdr '()) -> Error
     // (cdr a) -> Error // a is not a list
     // (cdr '(a b c)) -> '(b c)
-    let first_arg_node = expect_node(&mut args, "cdr", 1, 1, span)?;
-    expect_no_more_args(&mut args, "cdr", 1, span)?;
+    let first_arg_node = expect_one_arg(args, span, "cdr")?;
     let first_arg = first_arg_node.kind.borrow();
     match &*first_arg {
         Sexpr::Pair(_, cdr) => Ok(cdr.clone()),
@@ -290,6 +292,198 @@ pub fn prim_cdr(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
                 format!("car: Expected a pair, got {}", first_arg.type_name()),
                 first_arg_node.span,
             ));
+        }
+    }
+}
+
+pub fn prim_cddr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (cddr '()) -> Error
+    // (cddr a) -> Error // a is not a list
+    // (cddr '(a b c)) -> '(c)
+    let first_arg_node = expect_one_arg(args, span, "cddr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(_, cddr) => Ok(cddr.clone()),
+            _ => Err(EvalError::InvalidArguments(
+                "cddr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("cddr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_cdddr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let first_arg_node = expect_one_arg(args, span, "cdddr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(_, cddr) => match &*cddr.kind.borrow() {
+                Sexpr::Pair(_, cdddr) => Ok(cdddr.clone()),
+                _ => Err(EvalError::InvalidArguments(
+                    "cdddr: list too short".to_string(),
+                    first_arg_node.span,
+                )),
+            },
+            _ => Err(EvalError::InvalidArguments(
+                "cdddr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("cdddr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_cddddr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let first_arg_node = expect_one_arg(args, span, "cddddr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(_, cddr) => match &*cddr.kind.borrow() {
+                Sexpr::Pair(_, cdddr) => match &*cdddr.kind.borrow() {
+                    Sexpr::Pair(_, cddddr) => Ok(cddddr.clone()),
+                    _ => Err(EvalError::InvalidArguments(
+                        "cddddr: list too short".to_string(),
+                        first_arg_node.span,
+                    )),
+                },
+                _ => Err(EvalError::InvalidArguments(
+                    "cddddr: list too short".to_string(),
+                    first_arg_node.span,
+                )),
+            },
+            _ => Err(EvalError::InvalidArguments(
+                "cddddr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("cddr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_cadr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (cadr '()) -> Error
+    // (cadr a) -> Error // a is not a list
+    // (cadr '(a b c)) -> b
+    let first_arg_node = expect_one_arg(args, span, "cadr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(cadr, _) => Ok(cadr.clone()),
+            _ => Err(EvalError::InvalidArguments(
+                "cadr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("cadr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_caddr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let first_arg_node = expect_one_arg(args, span, "caddr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(_, cddr) => match &*cddr.kind.borrow() {
+                Sexpr::Pair(caddr, _) => Ok(caddr.clone()),
+                _ => Err(EvalError::InvalidArguments(
+                    "caddr: list too short".to_string(),
+                    first_arg_node.span,
+                )),
+            },
+            _ => Err(EvalError::InvalidArguments(
+                "caddr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("caddr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_cadddr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let first_arg_node = expect_one_arg(args, span, "cadddr")?;
+    let first_arg = first_arg_node.kind.borrow();
+    match &*first_arg {
+        Sexpr::Pair(_, cdr) => match &*cdr.kind.borrow() {
+            Sexpr::Pair(_, cddr) => match &*cddr.kind.borrow() {
+                Sexpr::Pair(_, cdddr) => match &*cdddr.kind.borrow() {
+                    Sexpr::Pair(cadddr, _) => Ok(cadddr.clone()),
+                    _ => Err(EvalError::InvalidArguments(
+                        "cadddr: list too short".to_string(),
+                        first_arg_node.span,
+                    )),
+                },
+                _ => Err(EvalError::InvalidArguments(
+                    "cadddr: list too short".to_string(),
+                    first_arg_node.span,
+                )),
+            },
+            _ => Err(EvalError::InvalidArguments(
+                "cadddr: list too short".to_string(),
+                first_arg_node.span,
+            )),
+        },
+        _ => Err(EvalError::InvalidArguments(
+            format!("cadddr: Expected a pair, got {}", first_arg.type_name()),
+            first_arg_node.span,
+        )),
+    }
+}
+
+pub fn prim_set_car(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (define x (cons 1 2)) -> x is (1 . 2)
+    // (set-car! x 'new) -> x is ('new . 2)
+    let (list, car) = expect_two_args(args, span, "set-car!")?;
+    let mut mut_list = list.kind.borrow_mut();
+    match *mut_list {
+        Sexpr::Pair(ref mut car_field, _) => {
+            *car_field = car;
+            Ok(Node::new_nil(span))
+        }
+        _ => {
+            drop(mut_list);
+            Err(EvalError::TypeMismatch {
+                expected: "pair".to_string(),
+                found: list.kind.borrow().clone(),
+                span,
+            })
+        }
+    }
+}
+
+pub fn prim_set_cdr(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    // (define x (cons 1 2)) -> x is (1 . 2)
+    // (set-cdr! x 'new) -> x is (1 . 'new)
+    let (list, cdr) = expect_two_args(args, span, "set-cdr!")?;
+    let mut mut_list = list.kind.borrow_mut();
+    match *mut_list {
+        Sexpr::Pair(_, ref mut cdr_field) => {
+            *cdr_field = cdr;
+            Ok(Node::new_nil(span))
+        }
+        _ => {
+            drop(mut_list);
+            Err(EvalError::TypeMismatch {
+                expected: "pair".to_string(),
+                found: list.kind.borrow().clone(),
+                span,
+            })
         }
     }
 }
