@@ -64,6 +64,8 @@ impl Environment {
             env.add_primitive("car", crate::primitives::prim_car);
             env.add_primitive("cdr", crate::primitives::prim_cdr);
             env.add_primitive("list", crate::primitives::prim_list);
+            env.add_primitive("set-car!", crate::primitives::prim_set_car);
+            env.add_primitive("set-cdr!", crate::primitives::prim_set_cdr);
 
             // Add Type Predicates
             env.add_primitive("null?", crate::primitives::prim_is_null);

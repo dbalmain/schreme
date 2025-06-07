@@ -3047,7 +3047,6 @@ mod tests {
         assert_eval_sexpr("(eq? x z)", "#t", Some(env));
     }
 
-    /*
     #[test]
     fn test_eq_bang_booleans() {
         assert_eval_sexpr("(eq? #t #t)", "#t", None);
@@ -3260,7 +3259,6 @@ mod tests {
         assert_eval_error("(equal? 1)", &arity_error, None);
         assert_eval_error("(equal? 1 2 3)", &arity_error, None);
     }
-    */
 
     // Optional: Advanced tests for equal? with circular structures
     // These require your `equal?` implementation to handle cycles.
@@ -3277,4 +3275,224 @@ mod tests {
     //     // For now, it's commented out.
     //     // assert_eval_sexpr("(equal? c1 c2)", "#t", Some(env));
     // }
+
+    // --- Tests for `set-car!` ---
+    #[test]
+    fn test_set_car_bang_simple() {
+        let env = new_test_env();
+        eval_str("(define my-pair (cons 1 2))", env.clone()).unwrap();
+        assert_eval_kind("(set-car! my-pair 100)", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("my-pair", "(100 . 2)", Some(env));
+    }
+
+    #[test]
+    fn test_set_car_bang_with_list() {
+        let env = new_test_env();
+        eval_str("(define my-list (list 'a 'b 'c))", env.clone()).unwrap();
+        assert_eval_kind("(set-car! my-list 'x)", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("my-list", "(x b c)", Some(env));
+    }
+
+    #[test]
+    fn test_set_car_bang_new_value_is_expression() {
+        let env = new_test_env();
+        eval_str("(define p (cons 0 #f))", env.clone()).unwrap();
+        assert_eval_kind("(set-car! p (+ 5 5))", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("p", "(10 . #f)", Some(env));
+    }
+
+    #[test]
+    fn test_set_car_bang_affects_shared_structure() {
+        let env = new_test_env();
+        eval_str("(define shared (list 1 2 3))", env.clone()).unwrap();
+        eval_str("(define alias shared)", env.clone()).unwrap(); // alias and shared point to the same list start
+
+        assert_eval_kind("(set-car! shared 'changed)", &Sexpr::Nil, Some(env.clone()));
+
+        assert_eval_sexpr("shared", "(changed 2 3)", Some(env.clone()));
+        assert_eval_sexpr("alias", "(changed 2 3)", Some(env)); // Mutation visible via alias
+    }
+
+    #[test]
+    fn test_set_car_bang_return_value_unspecified() {
+        let env = new_test_env();
+        eval_str("(define p (cons 'q 'r))", env.clone()).unwrap();
+        assert_eval_kind("(set-car! p 'new-car)", &Sexpr::Nil, Some(env));
+    }
+
+    // --- Error Cases for `set-car!` ---
+    #[test]
+    fn test_set_car_bang_error_not_a_pair() {
+        let dummy_error = EvalError::TypeMismatch {
+            expected: "pair".to_string(),
+            found: Sexpr::Symbol("Symbol".to_string()),
+            span: Default::default(),
+        };
+        assert_eval_error("(set-car! 'not-pair 1)", &dummy_error, None);
+
+        let dummy_error_num = EvalError::TypeMismatch {
+            expected: "pair".to_string(),
+            found: Sexpr::Number(123.0),
+            span: Default::default(),
+        };
+        assert_eval_error("(set-car! 123 1)", &dummy_error_num, None);
+    }
+
+    #[test]
+    fn test_set_car_bang_error_empty_list() {
+        // '() is not a pair, it's Nil.
+        let dummy_error = EvalError::TypeMismatch {
+            expected: "pair".to_string(),
+            found: Sexpr::Nil,
+            span: Default::default(),
+        };
+        assert_eval_error("(set-car! '() 1)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_car_bang_arity_error_too_few() {
+        let dummy_error = EvalError::InvalidArguments("".into(), Span::default());
+        assert_eval_error("(set-car! (cons 1 2))", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_car_bang_arity_error_too_many() {
+        let dummy_error = EvalError::InvalidArguments("".into(), Span::default());
+        assert_eval_error("(set-car! (cons 1 2) 3 4)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_car_bang_error_in_value_expr() {
+        let env = new_test_env();
+        eval_str("(define p (cons 1 2))", env.clone()).unwrap();
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "unbound".to_string(),
+            Default::default(),
+        ));
+        assert_eval_error("(set-car! p unbound)", &dummy_error, Some(env.clone()));
+        // Ensure original pair is unchanged
+        assert_eval_sexpr("p", "(1 . 2)", Some(env));
+    }
+
+    // --- Tests for `set-cdr!` ---
+    #[test]
+    fn test_set_cdr_bang_simple() {
+        let env = new_test_env();
+        eval_str("(define my-pair (cons 1 2))", env.clone()).unwrap();
+        assert_eval_kind("(set-cdr! my-pair 100)", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("my-pair", "(1 . 100)", Some(env));
+    }
+
+    #[test]
+    fn test_set_cdr_bang_with_list_to_make_longer() {
+        let env = new_test_env();
+        eval_str("(define my-list (list 'a))", env.clone()).unwrap(); // (a) which is (a . ())
+        assert_eval_kind(
+            "(set-cdr! my-list (list 'b 'c))",
+            &Sexpr::Nil,
+            Some(env.clone()),
+        );
+        assert_eval_sexpr("my-list", "(a b c)", Some(env));
+    }
+
+    #[test]
+    fn test_set_cdr_bang_with_list_to_make_shorter_dotted() {
+        let env = new_test_env();
+        eval_str("(define my-list (list 'a 'b 'c))", env.clone()).unwrap(); // (a b c)
+        // Modify the cdr of the first pair (whose car is 'a')
+        assert_eval_kind("(set-cdr! my-list 'd)", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("my-list", "(a . d)", Some(env));
+    }
+
+    #[test]
+    fn test_set_cdr_bang_new_value_is_expression() {
+        let env = new_test_env();
+        eval_str("(define p (cons #t 0))", env.clone()).unwrap();
+        assert_eval_kind("(set-cdr! p (+ 50 50))", &Sexpr::Nil, Some(env.clone()));
+        assert_eval_sexpr("p", "(#t . 100)", Some(env));
+    }
+
+    #[test]
+    fn test_set_cdr_bang_affects_shared_structure() {
+        let env = new_test_env();
+        eval_str("(define shared (list 1 2 3))", env.clone()).unwrap();
+        eval_str("(define alias shared)", env.clone()).unwrap();
+
+        // shared is (1 2 3). (set-cdr! shared '(new tail)) changes (1 . (new tail))
+        assert_eval_kind(
+            "(set-cdr! shared '(new tail))",
+            &Sexpr::Nil,
+            Some(env.clone()),
+        );
+
+        assert_eval_sexpr("shared", "(1 new tail)", Some(env.clone()));
+        assert_eval_sexpr("alias", "(1 new tail)", Some(env)); // Mutation visible
+    }
+
+    #[test]
+    fn test_set_cdr_bang_creating_circular_list() {
+        let env = new_test_env();
+        eval_str("(define x (list 'a 'b))", env.clone()).unwrap(); // x is (a b)
+        assert_eval_kind("(set-cdr! (cdr x) x)", &Sexpr::Nil, Some(env.clone())); // Make cdr of (b . ()) point back to (a b ...)
+        // x is now (a b a b a b ...)
+        // Printing this will loop infinitely if your printer doesn't handle cycles.
+        // We can't easily assert_eval_sexpr for the whole thing.
+        // Let's check parts if possible, or rely on later tests for `equal?` with cycles.
+        assert_eval_sexpr("(car x)", "a", Some(env.clone()));
+        assert_eval_sexpr("(car (cdr x))", "b", Some(env.clone()));
+        assert_eval_sexpr("(car (cdr (cdr x)))", "a", Some(env.clone())); // Back to the start
+        assert_eval_sexpr("(eq? (cdr (cdr x)) x)", "#t", Some(env)); // Key check for circularity
+    }
+
+    #[test]
+    fn test_set_cdr_bang_return_value_unspecified() {
+        let env = new_test_env();
+        eval_str("(define p (cons 'q 'r))", env.clone()).unwrap();
+        assert_eval_kind("(set-cdr! p 'new-cdr)", &Sexpr::Nil, Some(env));
+    }
+
+    // --- Error Cases for `set-cdr!` ---
+    #[test]
+    fn test_set_cdr_bang_error_not_a_pair() {
+        let dummy_error = EvalError::TypeMismatch {
+            expected: "pair".to_string(),
+            found: Sexpr::Symbol("Symbol".to_string()),
+            span: Default::default(),
+        };
+        assert_eval_error("(set-cdr! 'not-pair 1)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_cdr_bang_error_empty_list() {
+        let dummy_error = EvalError::TypeMismatch {
+            expected: "pair".to_string(),
+            found: Sexpr::Nil,
+            span: Default::default(),
+        };
+        assert_eval_error("(set-cdr! '() 1)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_cdr_bang_arity_error_too_few() {
+        let dummy_error = EvalError::InvalidArguments("".into(), Span::default());
+        assert_eval_error("(set-cdr! (cons 1 2))", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_cdr_bang_arity_error_too_many() {
+        let dummy_error = EvalError::InvalidArguments("".into(), Span::default());
+        assert_eval_error("(set-cdr! (cons 1 2) 3 4)", &dummy_error, None);
+    }
+
+    #[test]
+    fn test_set_cdr_bang_error_in_value_expr() {
+        let env = new_test_env();
+        eval_str("(define p (cons 1 2))", env.clone()).unwrap();
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "unbound".to_string(),
+            Default::default(),
+        ));
+        assert_eval_error("(set-cdr! p unbound)", &dummy_error, Some(env.clone()));
+        assert_eval_sexpr("p", "(1 . 2)", Some(env)); // Original pair unchanged
+    }
 }
