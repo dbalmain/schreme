@@ -55,14 +55,14 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Implement `letrec` special form
     * [x] Implement basic procedure calls (primitives first).
     * [x] Implement robust error handling (`EvalError`).
-* [ ] **Primitive Procedures:** Implement core built-in functions.
+* [x] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
     * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)
     * [x] Type predicates (`number?`, `symbol?`, `boolean?`, `list?`, `pair?`, `null?`, `procedure?`).
     * [x] List operations (`cons`, `car`, `cdr`, `list`).
     * [x] Lambda application (`apply`)
-    * [ ] Equality (`eq?`, `eqv?`, `equal?`).
-* [ ] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
+    * [x] Equality (`eq?`, `eqv?`, `equal?`).
+* [x] **REPL (`main.rs` or separate module):** Basic Read-Eval-Print Loop.
     * [x] Read input line by line.
     * [x] Integrate Lexer, Parser, Evaluator.
     * [x] Print results or errors.
@@ -70,7 +70,6 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Add history (using rustyline?).
     * [x] Add tab completion.
     * [x] Print clear errors showing where the error occured.
-    * [ ] Syntax highlight bound and unbound variables.
 * [x] **Error Handling:** Unified and user-friendly error reporting.
     * [x] Include source location/span information in errors.
     * [x] Consistent error types/display.
