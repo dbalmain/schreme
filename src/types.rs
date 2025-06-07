@@ -199,6 +199,52 @@ impl Node {
         }
         current_list_node
     }
+
+    pub fn scheme_eq(&self, other: &Node) -> bool {
+        // For eq?, the primary check for heap-allocated Sexprs (via Rc<RefCell>)
+        // is whether they point to the same allocation.
+        if Rc::ptr_eq(&self.kind, &other.kind) {
+            return true;
+        }
+
+        let left_kind = self.kind.borrow();
+        let right_kind = other.kind.borrow();
+
+        match (&*left_kind, &*right_kind) {
+            (Sexpr::String(a), Sexpr::String(b)) => a == b,
+            (Sexpr::Symbol(a), Sexpr::Symbol(b)) => a == b,
+            (Sexpr::Number(a), Sexpr::Number(b)) => a == b,
+            (Sexpr::Boolean(a), Sexpr::Boolean(b)) => a == b,
+            (Sexpr::Nil, Sexpr::Nil) => true,
+            // For Pairs, Procedures, they must be Rc::ptr_eq to be eq?, which was handled above.
+            // If not Rc::ptr_eq, they are not eq?.
+            (Sexpr::Pair(_, _), Sexpr::Pair(_, _)) => false,
+            (Sexpr::Procedure(_), Sexpr::Procedure(_)) => false,
+            _ => false,
+        }
+    }
+
+    pub fn scheme_eqv(&self, other: &Node) -> bool {
+        // for schreme at the moment, eqv? is the same as eq?. eq? will match 100.0 and 100.0
+        // even if they're not in the smae memory location.
+        self.scheme_eq(other)
+    }
+
+    pub fn scheme_equal(&self, other: &Node) -> bool {
+        if self.scheme_eqv(other) {
+            return true;
+        }
+        let left_kind = self.kind.borrow();
+        let right_kind = other.kind.borrow();
+
+        match (&*left_kind, &*right_kind) {
+            (Sexpr::Pair(left_car, left_cdr), Sexpr::Pair(right_car, right_cdr)) => {
+                left_car.scheme_equal(right_car) && left_cdr.scheme_equal(right_cdr)
+            }
+            // eqv? would have handled any other case
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for Node {

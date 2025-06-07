@@ -237,6 +237,17 @@ fn expect_no_more_args(
     }
 }
 
+fn expect_two_args(
+    mut args: EvaluatedNodeIterator,
+    span: Span,
+    name: &str,
+) -> EvalResult<(Node, Node)> {
+    let first_arg_node = expect_node(&mut args, name, 1, 2, span)?;
+    let second_arg_node = expect_node(&mut args, name, 2, 2, span)?;
+    expect_no_more_args(&mut args, name, 2, span)?;
+    Ok((first_arg_node, second_arg_node))
+}
+
 pub fn prim_cons(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     // (cons item '()) -> '(item)
     // (cons a '(b c)) -> '(a b c)
@@ -357,4 +368,19 @@ pub fn prim_kind(mut args: EvaluatedNodeIterator, span: Span) -> EvalResult {
         first_arg_node.kind.borrow().type_name(),
         span,
     ))
+}
+
+pub fn prim_eq(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let (left_node, right_node) = expect_two_args(args, span, "eq")?;
+    Ok(Node::new_bool(left_node.scheme_eq(&right_node), span))
+}
+
+pub fn prim_eqv(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let (left_node, right_node) = expect_two_args(args, span, "eq")?;
+    Ok(Node::new_bool(left_node.scheme_eqv(&right_node), span))
+}
+
+pub fn prim_equal(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let (left_node, right_node) = expect_two_args(args, span, "eq")?;
+    Ok(Node::new_bool(left_node.scheme_equal(&right_node), span))
 }

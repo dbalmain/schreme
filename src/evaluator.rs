@@ -3033,4 +3033,248 @@ mod tests {
             Some(env.clone()),
         );
     }
+
+    // --- Tests for `eq?` ---
+    #[test]
+    fn test_eq_bang_symbols() {
+        assert_eval_sexpr("(eq? 'foo 'foo)", "#t", None);
+        assert_eval_sexpr("(eq? 'foo 'bar)", "#f", None);
+        let env = new_test_env();
+        eval_str("(define x 'a)", env.clone()).unwrap();
+        eval_str("(define y 'a)", env.clone()).unwrap();
+        eval_str("(define z x)", env.clone()).unwrap();
+        assert_eval_sexpr("(eq? x y)", "#t", Some(env.clone())); // Symbols with same name are eq?
+        assert_eval_sexpr("(eq? x z)", "#t", Some(env));
+    }
+
+    /*
+    #[test]
+    fn test_eq_bang_booleans() {
+        assert_eval_sexpr("(eq? #t #t)", "#t", None);
+        assert_eval_sexpr("(eq? #f #f)", "#t", None);
+        assert_eval_sexpr("(eq? #t #f)", "#f", None);
+        let env = new_test_env();
+        eval_str("(define t1 #t)", env.clone()).unwrap();
+        eval_str("(define t2 #t)", env.clone()).unwrap();
+        assert_eval_sexpr("(eq? t1 t2)", "#t", Some(env));
+    }
+
+    #[test]
+    fn test_eq_bang_empty_list() {
+        assert_eval_sexpr("(eq? '() '())", "#t", None);
+        assert_eval_sexpr("(eq? (list) '())", "#t", None); // If (list) produces the unique '()
+    }
+
+    #[test]
+    fn test_eq_bang_numbers() {
+        assert_eval_sexpr("(eq? 1 1)", "#t", None); // Small integers might be interned or eqv? implies eq?
+        assert_eval_sexpr("(eq? 1 2)", "#f", None);
+        assert_eval_sexpr("(eq? 1.0 1.0)", "#t", None); // Similar to integers
+        assert_eval_sexpr("(eq? 1.0 1.1)", "#f", None);
+
+        let env = new_test_env();
+        eval_str("(define n1 1000.0)", env.clone()).unwrap();
+        eval_str("(define n2 1000.0)", env.clone()).unwrap();
+        // For numbers, (eq? x y) if (eqv? x y) is true and x is not a procedure or mutable.
+        // Since your numbers are f64 (immutable values), this should hold.
+        assert_eval_sexpr("(eq? n1 n2)", "#t", Some(env.clone()));
+        eval_str("(define n3 (+ 500.0 500.0))", env.clone()).unwrap(); // n3 is also 1000.0
+        assert_eval_sexpr("(eq? n1 n3)", "#t", Some(env));
+    }
+
+    #[test]
+    fn test_eq_bang_strings() {
+        assert_eval_sexpr("(eq? \"foo\" \"foo\")", "#t", None); // Literal strings might be interned
+        assert_eval_sexpr("(eq? \"foo\" \"bar\")", "#f", None);
+
+        let env = new_test_env();
+        eval_str("(define s1 \"abc\")", env.clone()).unwrap();
+        eval_str("(define s2 \"abc\")", env.clone()).unwrap();
+        // R7RS: if (eqv? x y) and x is not mutable pair/string/vector/bytevector/procedure => (eq? x y) is true
+        // If your strings are immutable values, this should be true.
+        assert_eval_sexpr("(eq? s1 s2)", "#t", Some(env.clone()));
+        // If strings are distinct mutable objects, this might be #f. Depends on your Sexpr::String impl.
+        // Assuming immutable string values or effective interning for literals.
+    }
+
+    #[test]
+    fn test_eq_bang_pairs_and_lists() {
+        assert_eval_sexpr("(eq? (cons 1 2) (cons 1 2))", "#f", None); // Distinct pairs
+        assert_eval_sexpr("(eq? (list 1 2) (list 1 2))", "#f", None); // Distinct lists
+
+        let env = new_test_env();
+        eval_str("(define p1 (cons 'a 'b))", env.clone()).unwrap();
+        eval_str("(define p2 (cons 'a 'b))", env.clone()).unwrap();
+        eval_str("(define p3 p1)", env.clone()).unwrap();
+        assert_eval_sexpr("(eq? p1 p2)", "#f", Some(env.clone())); // Distinct objects
+        assert_eval_sexpr("(eq? p1 p3)", "#t", Some(env.clone())); // Same object
+
+        eval_str("(define lst1 '(x y))", env.clone()).unwrap();
+        eval_str("(define lst2 '(x y))", env.clone()).unwrap(); // Should be a new list object from (quote (x y))
+        assert_eval_sexpr("(eq? lst1 lst2)", "#f", Some(env.clone())); // Usually false, new list created by quote
+        // unless quote interns deeply, which is uncommon.
+    }
+
+    #[test]
+    fn test_eq_bang_procedures() {
+        let env = new_test_env();
+        eval_str("(define f (lambda (x) x))", env.clone()).unwrap();
+        eval_str("(define g (lambda (x) x))", env.clone()).unwrap();
+        eval_str("(define h f)", env.clone()).unwrap();
+
+        assert_eval_sexpr("(eq? f g)", "#f", Some(env.clone())); // Distinct lambda objects
+        assert_eval_sexpr("(eq? f h)", "#t", Some(env.clone())); // Same lambda object
+        assert_eval_sexpr("(eq? + +)", "#t", Some(env)); // Primitives should be eq? to themselves
+    }
+
+    #[test]
+    fn test_eq_bang_arity() {
+        let arity_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        assert_eval_error("(eq? 1)", &arity_error, None);
+        assert_eval_error("(eq? 1 2 3)", &arity_error, None);
+    }
+
+    // --- Tests for `eqv?` ---
+    #[test]
+    fn test_eqv_bang_symbols() {
+        assert_eval_sexpr("(eqv? 'foo 'foo)", "#t", None);
+        assert_eval_sexpr("(eqv? 'foo 'bar)", "#f", None);
+    }
+
+    #[test]
+    fn test_eqv_bang_booleans() {
+        assert_eval_sexpr("(eqv? #t #t)", "#t", None);
+        assert_eval_sexpr("(eqv? #t #f)", "#f", None);
+    }
+
+    #[test]
+    fn test_eqv_bang_empty_list() {
+        assert_eval_sexpr("(eqv? '() '())", "#t", None);
+    }
+
+    #[test]
+    fn test_eqv_bang_numbers() {
+        assert_eval_sexpr("(eqv? 1 1)", "#t", None);
+        assert_eval_sexpr("(eqv? 1 2)", "#f", None);
+        assert_eval_sexpr("(eqv? 1.0 1)", "#t", None); // Numerically equal, both inexact (f64)
+        assert_eval_sexpr("(eqv? 1.0 1.0)", "#t", None);
+        assert_eval_sexpr("(eqv? 1.0 1.0000000000000001)", "#t", None); // Standard f64 comparison
+        assert_eval_sexpr("(eqv? 1.0 1.1)", "#f", None);
+        // Add tests for +0.0 vs -0.0 if you distinguish them (R7RS says (eqv? 0.0 -0.0) is #t)
+        assert_eval_sexpr("(eqv? 0.0 -0.0)", "#t", None);
+        // Add tests for NaN if you support it (R7RS says (eqv? +nan.0 +nan.0) is implementation-dependent, often #f or errors)
+        // For now, let's assume standard f64 NaN behavior where NaN != NaN
+        // eval_str("(define nan (/ 0.0 0.0))", env.clone()).unwrap();
+        // assert_eval_sexpr("(eqv? nan nan)", "#f", Some(env)); // Typical f64 behavior
+    }
+
+    #[test]
+    fn test_eqv_bang_strings() {
+        // eqv? on strings is like eq? according to R7RS (if they are eq? they are eqv?)
+        // but if they are not eq? they are not eqv?
+        assert_eval_sexpr("(eqv? \"foo\" \"foo\")", "#t", None); // Literals might be interned
+        let env = new_test_env();
+        eval_str("(define s1 \"abc\")", env.clone()).unwrap();
+        eval_str("(define s2 \"abc\")", env.clone()).unwrap();
+        assert_eval_sexpr("(eqv? s1 s2)", "#t", Some(env.clone())); // Assuming immutable strings, eq? -> eqv?
+        // If strings are distinct mutable obj, then #f
+    }
+
+    #[test]
+    fn test_eqv_bang_pairs_and_lists() {
+        assert_eval_sexpr("(eqv? (cons 1 2) (cons 1 2))", "#f", None); // Distinct pairs
+        assert_eval_sexpr("(eqv? (list 1 2) (list 1 2))", "#f", None); // Distinct lists
+        let env = new_test_env();
+        eval_str("(define p1 (cons 'a 'b))", env.clone()).unwrap();
+        eval_str("(define p3 p1)", env.clone()).unwrap();
+        assert_eval_sexpr("(eqv? p1 p3)", "#t", Some(env)); // Same object
+    }
+
+    #[test]
+    fn test_eqv_bang_procedures() {
+        // eqv? on procedures is like eq?
+        let env = new_test_env();
+        eval_str("(define f (lambda (x) x))", env.clone()).unwrap();
+        eval_str("(define g (lambda (x) x))", env.clone()).unwrap();
+        assert_eval_sexpr("(eqv? f g)", "#f", Some(env));
+    }
+
+    #[test]
+    fn test_eqv_bang_arity() {
+        let arity_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        assert_eval_error("(eqv? 1)", &arity_error, None);
+        assert_eval_error("(eqv? 1 2 3)", &arity_error, None);
+    }
+
+    // --- Tests for `equal?` ---
+    #[test]
+    fn test_equal_bang_symbols_numbers_booleans() {
+        // Behaves like eqv? for these types
+        assert_eval_sexpr("(equal? 'foo 'foo)", "#t", None);
+        assert_eval_sexpr("(equal? 1 1.0)", "#t", None);
+        assert_eval_sexpr("(equal? #t #t)", "#t", None);
+        assert_eval_sexpr("(equal? '() '())", "#t", None);
+    }
+
+    #[test]
+    fn test_equal_bang_strings() {
+        assert_eval_sexpr("(equal? \"foo\" \"foo\")", "#t", None);
+        assert_eval_sexpr("(equal? \"foo\" \"bar\")", "#f", None);
+        let env = new_test_env();
+        eval_str("(define s1 \"abc\")", env.clone()).unwrap();
+        eval_str("(define s2 \"abc\")", env.clone()).unwrap(); // s1 and s2 may not be eq?
+        assert_eval_sexpr("(equal? s1 s2)", "#t", Some(env)); // But they are equal?
+    }
+
+    #[test]
+    fn test_equal_bang_pairs_and_lists() {
+        assert_eval_sexpr("(equal? (cons 1 2) (cons 1 2))", "#t", None);
+        assert_eval_sexpr("(equal? (list 1 2) (list 1 2))", "#t", None);
+        assert_eval_sexpr("(equal? '(a (b c) d) '(a (b c) d))", "#t", None);
+        assert_eval_sexpr("(equal? '(a b) '(a c))", "#f", None);
+        assert_eval_sexpr("(equal? '(a b) '(a b c))", "#f", None);
+        assert_eval_sexpr("(equal? '(a b . c) '(a b . c))", "#t", None);
+        assert_eval_sexpr("(equal? '(a b . c) '(a b . d))", "#f", None);
+    }
+
+    #[test]
+    fn test_equal_bang_nested_lists() {
+        let env = new_test_env();
+        eval_str("(define l1 '(1 (2 (3)) 4))", env.clone()).unwrap();
+        eval_str("(define l2 (list 1 (list 2 (list 3)) 4))", env.clone()).unwrap();
+        assert_eval_sexpr("(equal? l1 l2)", "#t", Some(env));
+    }
+
+    #[test]
+    fn test_equal_bang_procedures() {
+        // Behaves like eqv? for procedures (so, like eq?)
+        let env = new_test_env();
+        eval_str("(define f (lambda (x) x))", env.clone()).unwrap();
+        eval_str("(define g (lambda (x) x))", env.clone()).unwrap();
+        assert_eval_sexpr("(equal? f g)", "#f", Some(env));
+    }
+
+    #[test]
+    fn test_equal_bang_arity() {
+        let arity_error = &EvalError::InvalidArguments("".into(), Span::default()); // Dummy
+        assert_eval_error("(equal? 1)", &arity_error, None);
+        assert_eval_error("(equal? 1 2 3)", &arity_error, None);
+    }
+    */
+
+    // Optional: Advanced tests for equal? with circular structures
+    // These require your `equal?` implementation to handle cycles.
+    // #[test]
+    // fn test_equal_bang_circular_lists_identical() {
+    //     let env = new_test_env();
+    //     eval_str("(define c1 (list 'a))", env.clone()).unwrap();
+    //     eval_str("(set-cdr! c1 c1)", env.clone()).unwrap(); // Requires set-cdr!
+    //     eval_str("(define c2 (list 'a))", env.clone()).unwrap();
+    //     eval_str("(set-cdr! c2 c2)", env.clone()).unwrap();
+    //     // c1 is (a a a ...), c2 is (a a a ...)
+    //     // (equal? c1 c2) should be #t if cycle detection is implemented.
+    //     // This test will likely fail or loop infinitely without cycle detection.
+    //     // For now, it's commented out.
+    //     // assert_eval_sexpr("(equal? c1 c2)", "#t", Some(env));
+    // }
 }

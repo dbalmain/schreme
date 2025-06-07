@@ -74,6 +74,11 @@ impl Environment {
             env.add_primitive("string?", crate::primitives::prim_is_string);
             env.add_primitive("procedure?", crate::primitives::prim_is_procedure);
 
+            // Add equivalence Predicates
+            env.add_primitive("eq?", crate::primitives::prim_eq);
+            env.add_primitive("eqv?", crate::primitives::prim_eqv);
+            env.add_primitive("equal?", crate::primitives::prim_equal);
+
             // Add Other Primitives
             env.add_primitive("kind", crate::primitives::prim_kind);
         }
