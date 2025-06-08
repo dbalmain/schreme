@@ -49,12 +49,13 @@ This list outlines the planned development steps, subject to change as the proje
     * [x] Implement `begin` special form.
     * [x] Implement `define` special form (global/local).
     * [x] Implement `set!` special form.
-    * [x] Implement `lambda` special form
-    * [x] Implement `let` special form
-    * [x] Implement `let*` special form
-    * [x] Implement `letrec` special form
+    * [x] Implement `lambda` special form.
+    * [x] Implement `let` special form.
+    * [x] Implement `let*` special form.
+    * [x] Implement `letrec` special form.
     * [x] Implement basic procedure calls (primitives first).
     * [x] Implement robust error handling (`EvalError`).
+    * [x] Implement `and` and `or` special forms.
 * [x] **Primitive Procedures:** Implement core built-in functions.
     * [x] Basic arithmetic (`+`, `-`, `*`, `/`).
     * [x] Comparison (`=`, `<`, `>`, `<=`, `>=`). (Note: `=` is numeric equal in Scheme)

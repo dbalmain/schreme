@@ -129,6 +129,8 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                         );
                     }
                     "apply" => evaluate_apply(rest, env, node.span),
+                    "and" => evaluate_and(rest, env, node.span),
+                    "or" => evaluate_or(rest, env, node.span),
                     _ => evaluate_procedure(first, rest, env, node.span),
                 },
 
@@ -141,6 +143,7 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
 pub fn special_form_identifiers() -> HashSet<String> {
     [
+        "and",
         "apply",
         "begin",
         "define",
@@ -149,6 +152,7 @@ pub fn special_form_identifiers() -> HashSet<String> {
         "let",
         "let*",
         "letrec",
+        "or",
         "quasiquote",
         "quote",
         "set!",
@@ -546,6 +550,27 @@ fn evaluate_apply(
             original_span,
         )),
     }
+}
+
+fn evaluate_and(operands: &Node, env: Rc<RefCell<Environment>>, original_span: Span) -> EvalResult {
+    let mut operand_node = Node::new_bool(true, original_span);
+    for operand in operands.clone().into_eval_iter(env) {
+        operand_node = operand?;
+        if !operand_node.is_truthy() {
+            return Ok(Node::new_bool(false, operand_node.span));
+        }
+    }
+    Ok(operand_node)
+}
+
+fn evaluate_or(operands: &Node, env: Rc<RefCell<Environment>>, original_span: Span) -> EvalResult {
+    for operand in operands.clone().into_eval_iter(env) {
+        let operand_node = operand?;
+        if operand_node.is_truthy() {
+            return Ok(operand_node);
+        }
+    }
+    Ok(Node::new_bool(false, original_span))
 }
 
 fn evaluate_set_bang(
@@ -3667,5 +3692,152 @@ mod tests {
         )
         .unwrap();
         assert_eval_sexpr("x", "((tail) (tail) (tail))", Some(env.clone()));
+    }
+
+    // --- Tests for `and` Special Form ---
+
+    #[test]
+    fn test_and_no_args() {
+        assert_eval_sexpr("(and)", "#t", None);
+    }
+
+    #[test]
+    fn test_and_single_true_arg() {
+        assert_eval_number("(and 1)", 1.0, None);
+        assert_eval_sexpr("(and #t)", "#t", None);
+        assert_eval_sexpr("(and '())", "()", None); // '() is true-ish
+        assert_eval_sexpr("(and \"hello\")", "\"hello\"", None);
+    }
+
+    #[test]
+    fn test_and_single_false_arg() {
+        assert_eval_sexpr("(and #f)", "#f", None);
+    }
+
+    #[test]
+    fn test_and_all_true_returns_last() {
+        assert_eval_number("(and 1 2 3)", 3.0, None);
+        assert_eval_sexpr("(and #t 'foo \"bar\")", "\"bar\"", None);
+        assert_eval_sexpr("(and 1 #t '())", "()", None);
+    }
+
+    #[test]
+    fn test_and_first_is_false_short_circuits() {
+        let env = new_test_env();
+        // (define x 0) should NOT be evaluated if the first #f short-circuits
+        assert_eval_sexpr("(and #f (define x 10) x)", "#f", Some(env.clone()));
+        // Verify x was not defined
+        let get_x_result = eval_str("x", env);
+        assert!(
+            matches!(get_x_result, Err(EvalError::EnvError(EnvError::UnboundVariable(ref name, _))) if name == "x"),
+            "x should not be defined due to short-circuiting in 'and'. Got: {:?}",
+            get_x_result.ok()
+        );
+    }
+
+    #[test]
+    fn test_and_middle_is_false_short_circuits() {
+        let env = new_test_env();
+        eval_str("(define y 0)", env.clone()).unwrap(); // y is 0
+        // (set! y 1) should be evaluated, then #f, then (set! y 2) should NOT.
+        assert_eval_sexpr("(and (set! y 1) #f (set! y 2))", "#f", Some(env.clone()));
+        assert_env_var_is_number(&env, "y", 1.0, "test_and_middle_is_false_short_circuits");
+    }
+
+    #[test]
+    fn test_and_error_in_expression_propagates() {
+        let env = new_test_env();
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "unbound".to_string(),
+            Default::default(),
+        ));
+        assert_eval_error("(and #t unbound #f)", &dummy_error, Some(env));
+    }
+
+    #[test]
+    fn test_and_error_in_later_expression_not_reached_due_to_short_circuit() {
+        let env = new_test_env();
+        // unbound should not be evaluated
+        assert_eval_sexpr("(and #f unbound)", "#f", Some(env));
+    }
+
+    // --- Tests for `or` Special Form ---
+
+    #[test]
+    fn test_or_no_args() {
+        assert_eval_sexpr("(or)", "#f", None);
+    }
+
+    #[test]
+    fn test_or_single_true_arg() {
+        assert_eval_number("(or 1)", 1.0, None);
+        assert_eval_sexpr("(or #t)", "#t", None);
+        assert_eval_sexpr("(or '())", "()", None);
+    }
+
+    #[test]
+    fn test_or_single_false_arg() {
+        assert_eval_sexpr("(or #f)", "#f", None);
+    }
+
+    #[test]
+    fn test_or_all_false_returns_last_false() {
+        assert_eval_sexpr("(or #f #f #f)", "#f", None);
+    }
+
+    #[test]
+    fn test_or_first_is_true_short_circuits_returns_first_value() {
+        let env = new_test_env();
+        // (define x 10) should NOT be evaluated
+        assert_eval_number("(or 1 (define x 10) x)", 1.0, Some(env.clone()));
+        let get_x_result = eval_str("x", env);
+        assert!(
+            matches!(get_x_result, Err(EvalError::EnvError(EnvError::UnboundVariable(ref name, _))) if name == "x"),
+            "x should not be defined due to short-circuiting in 'or'. Got: {:?}",
+            get_x_result.ok()
+        );
+    }
+
+    #[test]
+    fn test_or_middle_is_true_short_circuits_returns_that_value() {
+        let env = new_test_env();
+        eval_str("(define y 0)", env.clone()).unwrap();
+        // (set! y 1) should be evaluated (result is unspecified, but #f makes it continue)
+        // then 'found-it, then (set! y 2) should NOT.
+        // Note: set! return value is unspecified. If it's not #f, it would short-circuit earlier.
+        // Assuming set! returns something true-ish (like the value set, or 'ok symbol) for this test
+        // to show short-circuiting *after* the #f.
+        // Let's adjust:
+        eval_str("(define z #f)", env.clone()).unwrap();
+        assert_eval_sexpr("(or z 'found-it (set! y 2))", "found-it", Some(env.clone()));
+        assert_env_var_is_number(
+            &env,
+            "y",
+            0.0,
+            "test_or_middle_is_true_short_circuits y unchanged",
+        );
+    }
+
+    #[test]
+    fn test_or_true_value_is_returned_not_just_t() {
+        assert_eval_sexpr("(or #f #f \"hello\" #f)", "\"hello\"", None);
+        assert_eval_number("(or #f 123 #f)", 123.0, None);
+    }
+
+    #[test]
+    fn test_or_error_in_expression_propagates_if_reached() {
+        let env = new_test_env();
+        let dummy_error = EvalError::EnvError(EnvError::UnboundVariable(
+            "unbound".to_string(),
+            Default::default(),
+        ));
+        assert_eval_error("(or #f unbound #t)", &dummy_error, Some(env));
+    }
+
+    #[test]
+    fn test_or_error_in_later_expression_not_reached_due_to_short_circuit() {
+        let env = new_test_env();
+        // unbound should not be evaluated
+        assert_eval_sexpr("(or #t unbound)", "#t", Some(env));
     }
 }

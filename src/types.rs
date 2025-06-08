@@ -126,6 +126,13 @@ impl Node {
         }
     }
 
+    pub fn is_truthy(self: &Node) -> bool {
+        match &*self.kind.borrow() {
+            Sexpr::Boolean(false) => false,
+            _ => true,
+        }
+    }
+
     pub fn is_pair(self: &Node) -> bool {
         match &*self.kind.borrow() {
             Sexpr::Pair(_, _) => true,
