@@ -129,8 +129,6 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
                         );
                     }
                     "apply" => evaluate_apply(rest, env, node.span),
-                    "and" => evaluate_and(rest, env, node.span),
-                    "or" => evaluate_or(rest, env, node.span),
                     _ => evaluate_procedure(first, rest, env, node.span),
                 },
 
@@ -143,7 +141,6 @@ pub fn evaluate(node: Node, env: Rc<RefCell<Environment>>) -> EvalResult {
 
 pub fn special_form_identifiers() -> HashSet<String> {
     [
-        "and",
         "apply",
         "begin",
         "define",
@@ -152,7 +149,6 @@ pub fn special_form_identifiers() -> HashSet<String> {
         "let",
         "let*",
         "letrec",
-        "or",
         "quasiquote",
         "quote",
         "set!",
@@ -550,27 +546,6 @@ fn evaluate_apply(
             original_span,
         )),
     }
-}
-
-fn evaluate_and(operands: &Node, env: Rc<RefCell<Environment>>, original_span: Span) -> EvalResult {
-    let mut operand_node = Node::new_bool(true, original_span);
-    for operand in operands.clone().into_eval_iter(env) {
-        operand_node = operand?;
-        if !operand_node.is_truthy() {
-            return Ok(Node::new_bool(false, operand_node.span));
-        }
-    }
-    Ok(operand_node)
-}
-
-fn evaluate_or(operands: &Node, env: Rc<RefCell<Environment>>, original_span: Span) -> EvalResult {
-    for operand in operands.clone().into_eval_iter(env) {
-        let operand_node = operand?;
-        if operand_node.is_truthy() {
-            return Ok(operand_node);
-        }
-    }
-    Ok(Node::new_bool(false, original_span))
 }
 
 fn evaluate_set_bang(

@@ -578,3 +578,24 @@ pub fn prim_equal(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
     let (left_node, right_node) = expect_two_args(args, span, "eq")?;
     Ok(Node::new_bool(left_node.scheme_equal(&right_node), span))
 }
+
+pub fn prim_and(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    let mut arg_node = Node::new_bool(true, span);
+    for arg in args {
+        arg_node = arg?;
+        if !arg_node.is_truthy() {
+            return Ok(Node::new_bool(false, arg_node.span));
+        }
+    }
+    Ok(arg_node)
+}
+
+pub fn prim_or(args: EvaluatedNodeIterator, span: Span) -> EvalResult {
+    for arg in args {
+        let arg_node = arg?;
+        if arg_node.is_truthy() {
+            return Ok(arg_node);
+        }
+    }
+    Ok(Node::new_bool(false, span))
+}

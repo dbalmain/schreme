@@ -89,6 +89,8 @@ impl Environment {
 
             // Add Other Primitives
             env.add_primitive("kind", crate::primitives::prim_kind);
+            env.add_primitive("and", crate::primitives::prim_and);
+            env.add_primitive("or", crate::primitives::prim_or);
         }
         env_ptr
     }
