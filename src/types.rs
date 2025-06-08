@@ -329,7 +329,9 @@ impl fmt::Display for Node {
                     } else {
                         write!(f, "{}", head)?;
                     }
-                    recursive_pair_fmt(tail, f, index + 1, false, seen)
+                    recursive_pair_fmt(tail, f, index + 1, false, seen)?;
+                    seen.remove(&ptr);
+                    Ok(())
                 }
                 Sexpr::Nil => Ok(()),
                 node => write!(f, " . {}", node),

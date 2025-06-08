@@ -3566,5 +3566,106 @@ mod tests {
         )
         .unwrap();
         assert_eval_sexpr("x", "(#0# #-1# #-2#)", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define c1 (list 'x))",
+                "(set-cdr! c1 c1)",
+                "(define c2 (list 'y))",
+                "(set-cdr! c2 c2)",
+                "(define s (list c1 'middle c2))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("s", "((x . #0#) middle (y . #0#))", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define common-tail '(z))",
+                "(define c1 (list 'a common-tail))",
+                "(set-cdr! c1 c1)",
+                "(define c2 (list 'b common-tail))",
+                "(set-cdr! c2 c2)",
+                "(define s (list c1 c2))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("s", "((a . #0#) (b . #0#))", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define p (cons 'val1 'val2))",
+                "(set-car! p p)",
+                "(set-cdr! p p)",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("p", "(#0# . #0#)", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define lst (list 'a 'b 'c 'd 'e))",
+                "(set-cdr! (cddddr lst) (cddr lst))",
+                "(define s (list 'start lst 'end))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("s", "(start (a b c d e . #-2#) end)", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define cycle (list 'c))",
+                "(set-cdr! cycle cycle)",
+                "(define s (list cycle 'sep cycle))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("s", "((c . #0#) sep (c . #0#))", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define c (list 'x))",
+                "(set-cdr! c c) ; c = #0=(x . #0#)",
+                "(define s (cons c 'y))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("s", "((x . #0#) . y)", Some(env.clone()));
+
+        eval_strs(
+            &[
+                "(define shared-tail '(z))",
+                "(define l1 (list 'a shared-tail))",
+                "(define l2 (list 'b l1))",
+                "(set-cdr! (cdr l1) l2)",
+                "(define s (list l1 l2 shared-tail))",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr(
+            "s",
+            "((a (z) b #-3#) (b (a (z) . #-3#)) (z))",
+            Some(env.clone()),
+        );
+
+        eval_strs(
+            &[
+                "(define common-tail '(tail))",
+                "(define x '(1 2 3))",
+                "(set-car! x common-tail)",
+                "(set-car! (cdr x) common-tail)",
+                "(set-car! (cddr x) common-tail)",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eval_sexpr("x", "((tail) (tail) (tail))", Some(env.clone()));
     }
 }
